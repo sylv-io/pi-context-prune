@@ -114,6 +114,8 @@ export type PruneOn = "every-turn" | "on-context-tag" | "on-demand" | "agent-mes
  */
 export type BatchingMode = "turn" | "agent-message";
 export type PruneStrategy = "summarize" | "placeholder";
+export type TokenEstimator = "auto" | "tiktoken" | "chars";
+export type TokenizerEncoding = "o200k_base" | "cl100k_base";
 
 /** Thinking/reasoning level requested for summarizer LLM calls. */
 export type SummarizerThinking = "default" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -148,6 +150,19 @@ export const PRUNE_ON_MODES: { value: PruneOn; label: string }[] = [
 export const PRUNE_STRATEGY_MODES: { value: PruneStrategy; label: string }[] = [
   { value: "summarize", label: "Summarize" },
   { value: "placeholder", label: "Placeholder" },
+];
+
+/** Choices for protected-tail token estimation. */
+export const TOKEN_ESTIMATOR_MODES: { value: TokenEstimator; label: string }[] = [
+  { value: "auto", label: "Auto" },
+  { value: "tiktoken", label: "Tiktoken" },
+  { value: "chars", label: "Characters" },
+];
+
+/** Supported js-tiktoken encodings for protected-tail estimates. */
+export const TOKENIZER_ENCODINGS: { value: TokenizerEncoding; label: string }[] = [
+  { value: "o200k_base", label: "o200k_base" },
+  { value: "cl100k_base", label: "cl100k_base" },
 ];
 
 /** Extension config stored in ~/.pi/agent/context-prune/settings.json */
@@ -197,7 +212,11 @@ export interface ContextPruneConfig {
    * raw. A value of 0 preserves current behavior.
    */
   protectedTailTokens: number;
-  /** Character divisor used by the built-in context-tail token estimator. */
+  /** Token estimator used for protected-tail and placeholder size estimates. */
+  tokenEstimator: TokenEstimator;
+  /** js-tiktoken encoding used when tokenEstimator is auto or tiktoken. */
+  tokenizerEncoding: TokenizerEncoding;
+  /** Character divisor used when tokenEstimator is chars or tiktoken fallback is needed. */
   charsPerToken: number;
 }
 
@@ -212,6 +231,8 @@ export const DEFAULT_CONFIG: ContextPruneConfig = {
   batchingMode: "turn",
   preserveToolResults: [],
   protectedTailTokens: 0,
+  tokenEstimator: "auto",
+  tokenizerEncoding: "o200k_base",
   charsPerToken: 4,
 };
 

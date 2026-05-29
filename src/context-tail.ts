@@ -1,21 +1,13 @@
 import type { ContextPruneConfig } from "./types.js";
+import { estimateTokens } from "./token-estimator.js";
 
 export interface ProtectedTailResult {
   protectedToolCallIds: Set<string>;
   estimatedTailTokens: number;
 }
 
-const DEFAULT_CHARS_PER_TOKEN = 4;
-
-function charsPerToken(config: ContextPruneConfig): number {
-  return Number.isFinite(config.charsPerToken) && config.charsPerToken > 0
-    ? config.charsPerToken
-    : DEFAULT_CHARS_PER_TOKEN;
-}
-
 function estimateTextTokens(text: string, config: ContextPruneConfig): number {
-  if (text.length === 0) return 0;
-  return Math.ceil(text.length / charsPerToken(config));
+  return estimateTokens(text, config).tokens;
 }
 
 function stableStringify(value: unknown): string {

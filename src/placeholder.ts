@@ -1,10 +1,6 @@
 import type { CapturedBatch, ContextPruneConfig } from "./types.js";
 import type { SummaryToolCallRef } from "./summary-refs.js";
-
-function estimateTokens(text: string, config: ContextPruneConfig): number {
-  const charsPerToken = Number.isFinite(config.charsPerToken) && config.charsPerToken > 0 ? config.charsPerToken : 4;
-  return Math.ceil(text.length / charsPerToken);
-}
+import { estimateTokens } from "./token-estimator.js";
 
 function formatArgValue(value: unknown): string {
   if (typeof value === "string") return value;
@@ -49,7 +45,7 @@ export function renderPlaceholderSummary(batch: CapturedBatch, refs: SummaryTool
     const args = summarizeArgs(toolCall.args);
     const argsText = args ? ` — ${args}` : "";
     const status = toolCall.isError ? "Error" : "Success";
-    const tokens = estimateTokens(toolCall.resultText, config);
+    const tokens = estimateTokens(toolCall.resultText, config).tokens;
     lines.push(
       `- **${toolCall.toolName}** \`${ref.shortId}\`${argsText} (${tokens} estimated tokens) — ${status}.${toolHint(toolCall.toolName)}`,
     );

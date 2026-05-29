@@ -135,7 +135,7 @@ The extension registers the `/pruner` command:
 | `/pruner settings` | Opens an interactive settings overlay |
 | `/pruner on` | Enable pruning |
 | `/pruner off` | Disable pruning |
-| `/pruner status` | Show enabled state, summarizer model, thinking level, prune trigger, and cumulative stats |
+| `/pruner status` | Show enabled state, summarizer model, thinking level, prune trigger, token estimator, and cumulative stats |
 | `/pruner model` | Show current summarizer model |
 | `/pruner model <id>` | Set summarizer model (e.g. `anthropic/claude-haiku-3-5`) |
 | `/pruner model <id>:<thinking>` | Set summarizer model and thinking together (e.g. `openai/gpt-5-mini:low`) |
@@ -150,13 +150,7 @@ The extension registers the `/pruner` command:
 
 ### Settings overlay
 
-`/pruner settings` opens a TUI overlay with five interactive items:
-
-1. **Enabled** — toggle pruning on/off
-2. **Prune status line** — show or hide the footer status widget and queued turn notifications
-3. **Prune trigger** — cycle through all five `pruneOn` modes
-4. **Summarizer model** — press Enter to open a searchable submenu listing `"default"` plus all available models
-5. **Summarizer thinking** — cycle through the thinking/reasoning level used for summarizer calls
+`/pruner settings` opens a TUI overlay with interactive items for pruning, summarizer, token-estimation, reminder, and batching settings.
 
 All changes are saved immediately to `~/.pi/agent/context-prune/settings.json` and reflected in the footer status widget when it is enabled.
 
@@ -197,7 +191,9 @@ Config is stored in `~/.pi/agent/context-prune/settings.json` (global, project-i
   "summarizerThinking": "default",
   "pruneOn": "agent-message",
   "remindUnprunedCount": true,
-  "preserveToolResults": []
+  "preserveToolResults": [],
+  "protectedTailTokens": 0,
+  "charsPerToken": 4
 }
 ```
 
@@ -210,6 +206,10 @@ Config is stored in `~/.pi/agent/context-prune/settings.json` (global, project-i
 | `pruneOn` | `"every-turn"`, `"on-context-tag"`, `"on-demand"`, `"agent-message"`, `"agentic-auto"` | `"agent-message"` |
 | `remindUnprunedCount` | `true` / `false` | `true` |
 | `preserveToolResults` | Array of tool-name and arg glob rules | `[]` |
+| `protectedTailTokens` | Non-negative estimated token count | `0` |
+| `tokenEstimator` | `"auto"`, `"tiktoken"`, `"chars"` | `"auto"` |
+| `tokenizerEncoding` | `"o200k_base"`, `"cl100k_base"` | `"o200k_base"` |
+| `charsPerToken` | Positive number | `4` |
 
 - `showPruneStatusLine: true` keeps the prune footer widget and the automatic queued-turn notice visible. Turn it off if you want pruning to stay active without the extra status noise.
 - `remindUnprunedCount: true` appends a small ephemeral `<pruner-note>` to the last tool result before each LLM call to remind the model of the number of unpruned tool calls in context. This only has an effect when `pruneOn` is set to `"agentic-auto"`.
@@ -219,6 +219,10 @@ Config is stored in `~/.pi/agent/context-prune/settings.json` (global, project-i
 - `summarizerThinking: "off"` requests no summarizer reasoning where the provider adapter supports an explicit disable path. Some providers may still fall back to their own default behavior.
 - `"minimal"`, `"low"`, `"medium"`, `"high"`, and `"xhigh"` request that thinking level for summarizer calls where supported. For cheap background summarization, prefer `"minimal"` or `"low"` with a small/fast model.
 - `preserveToolResults` keeps matching tool results as raw context. Matching results are not summarized, not indexed as summarized, and not pruned later. Rules match exact `toolName` strings and glob patterns over selected string arg values. All configured arg keys must match. Unless you configure rules, no tool results are preserved.
+- `protectedTailTokens` keeps the newest estimated tokens of the final model-facing context raw. A value of `0` disables this guard.
+- `tokenEstimator: "auto"` uses `js-tiktoken` with `tokenizerEncoding` when available, then falls back to a character estimate. Use `"chars"` for deterministic character-based estimates.
+- `charsPerToken` controls the character estimator used by `tokenEstimator: "chars"` and the tiktoken fallback.
+- Default `tokenEstimator` and `tokenizerEncoding` values are optional and omitted when settings are saved.
 - Settings are persisted on every change via the `/pruner` command or the settings overlay.
 
 Example for preserving skill instruction files loaded by `read`:
@@ -282,6 +286,7 @@ src/
   summarizer.ts             — resolve model, call LLM, build summary text
   indexer.ts                — Map<toolCallId, ToolCallRecord> + session persistence
   pruner.ts                 — filter context event messages
+  token-estimator.ts        — protected-tail token estimates via js-tiktoken or character fallback
   query-tool.ts             — context_tree_query tool registration
   context-prune-tool.ts     — context_prune tool registration (agentic-auto)
   frontier.ts               — persisted prune-frontier tracker for last attempted prune boundary
@@ -332,7 +337,8 @@ flushPending()
   └─► statsAccum.add()/persist() accumulate token/cost stats for the summarizer call
 
 context (enabled + index non-empty)
-  └─► pruneMessages()            remove toolResult messages in the index
+  └─► computeProtectedTail()     mark newest estimated tokens as raw/protected
+  └─► pruneMessages()            remove indexed toolResult messages outside the protected tail
 
 before_agent_start (agentic-auto mode)
   └─► append AGENTIC_AUTO_SYSTEM_PROMPT to system prompt

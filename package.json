@@ -30,6 +30,9 @@
       "./prompts"
     ]
   },
+  "dependencies": {
+    "js-tiktoken": "^1.0.21"
+  },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*",
     "@mariozechner/pi-ai": "*",

@@ -9,6 +9,8 @@ import {
   STATUS_WIDGET_ID,
   PROGRESS_WIDGET_ID,
   SUMMARIZER_THINKING_LEVELS,
+  TOKEN_ESTIMATOR_MODES,
+  TOKENIZER_ENCODINGS,
 } from "./types.js";
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import { saveConfig } from "./config.js";
@@ -114,6 +116,24 @@ function pruneStrategyDescription(strategy: ContextPruneConfig["pruneStrategy"])
   return "Replace pruned tool outputs with an LLM-written summary plus recovery refs.";
 }
 
+function tokenEstimatorLabel(estimator: ContextPruneConfig["tokenEstimator"]): string {
+  return TOKEN_ESTIMATOR_MODES.find((entry) => entry.value === estimator)?.label ?? estimator;
+}
+
+function tokenizerEncodingLabel(encoding: ContextPruneConfig["tokenizerEncoding"]): string {
+  return TOKENIZER_ENCODINGS.find((entry) => entry.value === encoding)?.label ?? encoding;
+}
+
+function tokenEstimatorDescription(config: ContextPruneConfig): string {
+  if (config.tokenEstimator === "chars") {
+    return `Use the character estimator (${config.charsPerToken} chars/token) for protected-tail and placeholder token estimates.`;
+  }
+  if (config.tokenEstimator === "tiktoken") {
+    return `Use js-tiktoken with ${config.tokenizerEncoding}; falls back to the character estimator if unavailable.`;
+  }
+  return `Use js-tiktoken with ${config.tokenizerEncoding} when available, otherwise fall back to ${config.charsPerToken} chars/token.`;
+}
+
 function summarizerThinkingLabel(level: ContextPruneConfig["summarizerThinking"]): string {
   return SUMMARIZER_THINKING_LEVELS.find((entry) => entry.value === level)?.label ?? level;
 }
@@ -185,7 +205,7 @@ Usage:
   /pruner settings                         Interactive settings overlay
   /pruner on                               Enable context pruning
   /pruner off                              Disable context pruning
-  /pruner status                           Show status, model, prune trigger, batching mode, and stats
+  /pruner status                           Show status, model, prune trigger, token estimator, and stats
   /pruner model                            Show the current summarizer model
   /pruner model <id>                       Set summarizer model (e.g. anthropic/claude-haiku-3-5)
   /pruner model <id>:<thinking>            Set summarizer model and thinking together (e.g. openai/gpt-5-mini:low)
@@ -466,6 +486,20 @@ export function registerCommands(
               description: summarizerThinkingDescription(config.summarizerThinking),
             },
             {
+              id: "tokenEstimator",
+              label: "Token estimator",
+              values: TOKEN_ESTIMATOR_MODES.map((mode) => mode.value),
+              currentValue: config.tokenEstimator,
+              description: tokenEstimatorDescription(config),
+            },
+            {
+              id: "tokenizerEncoding",
+              label: "Tokenizer encoding",
+              values: TOKENIZER_ENCODINGS.map((encoding) => encoding.value),
+              currentValue: config.tokenizerEncoding,
+              description: "js-tiktoken encoding used when token estimator is auto or tiktoken.",
+            },
+            {
               id: "remindUnprunedCount",
               label: "Remind unpruned count",
               values: ["true", "false"],
@@ -517,6 +551,18 @@ export function registerCommands(
               const thinkingItem = items.find((item) => item.id === "summarizerThinking");
               if (thinkingItem) {
                 thinkingItem.description = summarizerThinkingDescription(newConfig.summarizerThinking);
+              }
+            } else if (id === "tokenEstimator") {
+              newConfig.tokenEstimator = newValue as ContextPruneConfig["tokenEstimator"];
+              const estimatorItem = items.find((item) => item.id === "tokenEstimator");
+              if (estimatorItem) {
+                estimatorItem.description = tokenEstimatorDescription(newConfig);
+              }
+            } else if (id === "tokenizerEncoding") {
+              newConfig.tokenizerEncoding = newValue as ContextPruneConfig["tokenizerEncoding"];
+              const estimatorItem = items.find((item) => item.id === "tokenEstimator");
+              if (estimatorItem) {
+                estimatorItem.description = tokenEstimatorDescription(newConfig);
               }
             } else if (id === "remindUnprunedCount") {
               newConfig.remindUnprunedCount = newValue === "true";
@@ -598,7 +644,7 @@ export function registerCommands(
             ? `\n  --- summarizer ---\n  calls:       ${s.callCount}\n  input:       ${formatTokens(s.totalInputTokens)} tokens\n  output:      ${formatTokens(s.totalOutputTokens)} tokens\n  cost:        ${formatCost(s.totalCost)}`
             : "\n  (no summarizer calls yet)";
           ctx.ui.notify(
-            `pruner status:\n  enabled:  ${cfg.enabled}\n  strategy: ${pruneStrategyLabel(cfg.pruneStrategy)} (${cfg.pruneStrategy})\n  model:    ${cfg.summarizerModel}\n  thinking: ${summarizerThinkingLabel(cfg.summarizerThinking)} (${cfg.summarizerThinking})\n  trigger:  ${mode}\n  batching: ${batchingModeLabel(cfg.batchingMode)} (${cfg.batchingMode})\n  status:   ${cfg.showPruneStatusLine ? "on" : "off"}\n  remind:   ${cfg.remindUnprunedCount ? "on" : "off"} (agentic-auto only)\n  protected context tail: ${formatTokens(cfg.protectedTailTokens)} estimated tokens${statsLine}`,
+            `pruner status:\n  enabled:  ${cfg.enabled}\n  strategy: ${pruneStrategyLabel(cfg.pruneStrategy)} (${cfg.pruneStrategy})\n  model:    ${cfg.summarizerModel}\n  thinking: ${summarizerThinkingLabel(cfg.summarizerThinking)} (${cfg.summarizerThinking})\n  trigger:  ${mode}\n  batching: ${batchingModeLabel(cfg.batchingMode)} (${cfg.batchingMode})\n  status:   ${cfg.showPruneStatusLine ? "on" : "off"}\n  remind:   ${cfg.remindUnprunedCount ? "on" : "off"} (agentic-auto only)\n  protected context tail: ${formatTokens(cfg.protectedTailTokens)} estimated tokens\n  token estimator: ${tokenEstimatorLabel(cfg.tokenEstimator)} (${cfg.tokenEstimator})\n  tokenizer encoding: ${tokenizerEncodingLabel(cfg.tokenizerEncoding)}\n  chars per token: ${cfg.charsPerToken}${statsLine}`,
           );
           break;
         }
