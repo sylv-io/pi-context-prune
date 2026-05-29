@@ -23,6 +23,7 @@ import { annotateWithUnprunedCount, countUnprunedToolCalls } from "./src/reminde
 import { registerQueryTool } from "./src/query-tool.js";
 import { registerCommands, setPruneStatusWidget } from "./src/commands.js";
 import { formatSummaryToolCallRefs, makeSummaryDetails } from "./src/summary-refs.js";
+import { renderPlaceholderSummary } from "./src/placeholder.js";
 import type { ContextPruneConfig, CapturedBatch, IndexEntryData, PruneFrontier, FlushOptions } from "./src/types.js";
 import {
   DEFAULT_CONFIG,
@@ -198,7 +199,8 @@ export default function (pi: ExtensionAPI) {
       sessionManager!.appendCustomMessageEntry(CUSTOM_TYPE_SUMMARY, content, true, details);
 
     try {
-      setPruneStatusWidget(ctx, currentConfig.value, "prune: summarizing…");
+      const usePlaceholderStrategy = currentConfig.value.pruneStrategy === "placeholder";
+      setPruneStatusWidget(ctx, currentConfig.value, usePlaceholderStrategy ? "prune: indexing…" : "prune: summarizing…");
 
       const reportBatchTextProgress = (index: number, total: number, batch: CapturedBatch, receivedChars: number) => {
         options.onBatchTextProgress?.(index, total, batch, receivedChars);
@@ -207,8 +209,14 @@ export default function (pi: ExtensionAPI) {
       // Summarize batches. When onProgress is provided (i.e. /pruner now with the
       // multi-row overlay) we process sequentially so each row can be checked off
       // as its LLM call completes. Otherwise all batches run in parallel.
-      let results: (import("./src/types.js").SummarizeResult | null)[];
-      if (options.onProgress) {
+      let results: ({ summaryText: string; usage?: import("./src/types.js").SummarizeResult["usage"] } | null)[];
+      if (usePlaceholderStrategy) {
+        results = batches.map((batch, i) => {
+          options.onProgress?.(i, batches.length, batch, "start");
+          options.onProgress?.(i, batches.length, batch, "done");
+          return { summaryText: "" };
+        });
+      } else if (options.onProgress) {
         results = [];
         for (let i = 0; i < batches.length; i++) {
           options.onProgress(i, batches.length, batches[i], "start");
@@ -249,10 +257,12 @@ export default function (pi: ExtensionAPI) {
         const batch = batches[i];
         const batchRawCharCount = batch.toolCalls.reduce((s, tc) => s + tc.resultText.length, 0);
         const summaryRefs = indexer.allocateSummaryRefs(batch);
-        const summaryText = result.summaryText + formatSummaryToolCallRefs(summaryRefs);
-        const shouldSkipOversized = summaryText.length > batchRawCharCount;
+        const summaryText = usePlaceholderStrategy
+          ? renderPlaceholderSummary(batch, summaryRefs, currentConfig.value)
+          : result.summaryText + formatSummaryToolCallRefs(summaryRefs);
+        const shouldSkipOversized = !usePlaceholderStrategy && summaryText.length > batchRawCharCount;
 
-        statsAccum.add(result.usage);
+        if (result.usage) statsAccum.add(result.usage);
         totalRawCharCount += batchRawCharCount;
         totalSummaryCharCount += summaryText.length;
         totalToolCallCount += batch.toolCalls.length;

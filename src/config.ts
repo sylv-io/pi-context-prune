@@ -1,8 +1,8 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
-import type { ContextPruneConfig, PreserveToolResultRule, PruneOn, SummarizerThinking } from "./types.js";
-import { DEFAULT_CONFIG, PRUNE_ON_MODES, SUMMARIZER_THINKING_LEVELS } from "./types.js";
+import type { ContextPruneConfig, PreserveToolResultRule, PruneOn, PruneStrategy, SummarizerThinking } from "./types.js";
+import { DEFAULT_CONFIG, PRUNE_ON_MODES, PRUNE_STRATEGY_MODES, SUMMARIZER_THINKING_LEVELS } from "./types.js";
 
 /** Path to the extension's own settings file, independent of any project. */
 export const SETTINGS_PATH = join(homedir(), ".pi", "agent", "context-prune", "settings.json");
@@ -13,6 +13,10 @@ function isPruneOn(value: unknown): value is PruneOn {
 
 function isSummarizerThinking(value: unknown): value is SummarizerThinking {
   return typeof value === "string" && SUMMARIZER_THINKING_LEVELS.some((level) => level.value === value);
+}
+
+function isPruneStrategy(value: unknown): value is PruneStrategy {
+  return typeof value === "string" && PRUNE_STRATEGY_MODES.some((mode) => mode.value === value);
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -67,6 +71,7 @@ export async function loadConfig(): Promise<ContextPruneConfig> {
           ? merged.showPruneStatusLine
           : DEFAULT_CONFIG.showPruneStatusLine,
       pruneOn: isPruneOn(merged.pruneOn) ? merged.pruneOn : DEFAULT_CONFIG.pruneOn,
+      pruneStrategy: isPruneStrategy(merged.pruneStrategy) ? merged.pruneStrategy : DEFAULT_CONFIG.pruneStrategy,
       summarizerThinking: isSummarizerThinking(merged.summarizerThinking)
         ? merged.summarizerThinking
         : DEFAULT_CONFIG.summarizerThinking,

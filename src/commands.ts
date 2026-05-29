@@ -4,6 +4,7 @@ import {
   type CapturedBatch,
   type FlushOptions,
   PRUNE_ON_MODES,
+  PRUNE_STRATEGY_MODES,
   BATCHING_MODES,
   STATUS_WIDGET_ID,
   PROGRESS_WIDGET_ID,
@@ -100,6 +101,17 @@ function pruneModeGuidance(mode: ContextPruneConfig["pruneOn"]): string {
 
 function pruneModeLabel(mode: ContextPruneConfig["pruneOn"]): string {
   return PRUNE_ON_MODES.find((entry) => entry.value === mode)?.label ?? mode;
+}
+
+function pruneStrategyLabel(strategy: ContextPruneConfig["pruneStrategy"]): string {
+  return PRUNE_STRATEGY_MODES.find((entry) => entry.value === strategy)?.label ?? strategy;
+}
+
+function pruneStrategyDescription(strategy: ContextPruneConfig["pruneStrategy"]): string {
+  if (strategy === "placeholder") {
+    return "Replace pruned tool outputs with deterministic refs and recovery hints instead of an LLM summary.";
+  }
+  return "Replace pruned tool outputs with an LLM-written summary plus recovery refs.";
 }
 
 function summarizerThinkingLabel(level: ContextPruneConfig["summarizerThinking"]): string {
@@ -404,6 +416,13 @@ export function registerCommands(
               description: pruneTriggerDescription(config.pruneOn),
             },
             {
+              id: "pruneStrategy",
+              label: "Prune strategy",
+              values: PRUNE_STRATEGY_MODES.map((m) => m.value),
+              currentValue: config.pruneStrategy,
+              description: pruneStrategyDescription(config.pruneStrategy),
+            },
+            {
               id: "summarizerModel",
               label: "Summarizer model",
               values: [config.summarizerModel], // show current value as the cycling option
@@ -484,6 +503,12 @@ export function registerCommands(
               const remindItem = items.find((item) => item.id === "remindUnprunedCount");
               if (remindItem) {
                 remindItem.description = remindUnprunedCountDescription(newConfig);
+              }
+            } else if (id === "pruneStrategy") {
+              newConfig.pruneStrategy = newValue as ContextPruneConfig["pruneStrategy"];
+              const strategyItem = items.find((item) => item.id === "pruneStrategy");
+              if (strategyItem) {
+                strategyItem.description = pruneStrategyDescription(newConfig.pruneStrategy);
               }
             } else if (id === "summarizerModel") {
               newConfig.summarizerModel = newValue;
@@ -573,7 +598,7 @@ export function registerCommands(
             ? `\n  --- summarizer ---\n  calls:       ${s.callCount}\n  input:       ${formatTokens(s.totalInputTokens)} tokens\n  output:      ${formatTokens(s.totalOutputTokens)} tokens\n  cost:        ${formatCost(s.totalCost)}`
             : "\n  (no summarizer calls yet)";
           ctx.ui.notify(
-            `pruner status:\n  enabled:  ${cfg.enabled}\n  model:    ${cfg.summarizerModel}\n  thinking: ${summarizerThinkingLabel(cfg.summarizerThinking)} (${cfg.summarizerThinking})\n  trigger:  ${mode}\n  batching: ${batchingModeLabel(cfg.batchingMode)} (${cfg.batchingMode})\n  status:   ${cfg.showPruneStatusLine ? "on" : "off"}\n  remind:   ${cfg.remindUnprunedCount ? "on" : "off"} (agentic-auto only)\n  protected context tail: ${formatTokens(cfg.protectedTailTokens)} estimated tokens${statsLine}`,
+            `pruner status:\n  enabled:  ${cfg.enabled}\n  strategy: ${pruneStrategyLabel(cfg.pruneStrategy)} (${cfg.pruneStrategy})\n  model:    ${cfg.summarizerModel}\n  thinking: ${summarizerThinkingLabel(cfg.summarizerThinking)} (${cfg.summarizerThinking})\n  trigger:  ${mode}\n  batching: ${batchingModeLabel(cfg.batchingMode)} (${cfg.batchingMode})\n  status:   ${cfg.showPruneStatusLine ? "on" : "off"}\n  remind:   ${cfg.remindUnprunedCount ? "on" : "off"} (agentic-auto only)\n  protected context tail: ${formatTokens(cfg.protectedTailTokens)} estimated tokens${statsLine}`,
           );
           break;
         }

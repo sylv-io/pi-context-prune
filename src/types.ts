@@ -113,6 +113,7 @@ export type PruneOn = "every-turn" | "on-context-tag" | "on-demand" | "agent-mes
  *                     (merges all turns between two consecutive user messages)
  */
 export type BatchingMode = "turn" | "agent-message";
+export type PruneStrategy = "summarize" | "placeholder";
 
 /** Thinking/reasoning level requested for summarizer LLM calls. */
 export type SummarizerThinking = "default" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -143,6 +144,12 @@ export const PRUNE_ON_MODES: { value: PruneOn; label: string }[] = [
   { value: "agentic-auto", label: "Agentic auto" },
 ];
 
+/** Choices for the prune strategy setting (used by commands and settings overlay) */
+export const PRUNE_STRATEGY_MODES: { value: PruneStrategy; label: string }[] = [
+  { value: "summarize", label: "Summarize" },
+  { value: "placeholder", label: "Placeholder" },
+];
+
 /** Extension config stored in ~/.pi/agent/context-prune/settings.json */
 export interface PreserveToolResultRule {
   /** Tool name to preserve. Omit to match any tool. */
@@ -166,6 +173,8 @@ export interface ContextPruneConfig {
   summarizerThinking: SummarizerThinking;
   /** When to trigger summarization and pruning */
   pruneOn: PruneOn;
+  /** How to replace raw tool outputs after they have been indexed. */
+  pruneStrategy: PruneStrategy;
   /**
    * Whether to inject a small ephemeral reminder before each LLM call
    * telling the model how many unpruned tool-call results have piled up.
@@ -198,6 +207,7 @@ export const DEFAULT_CONFIG: ContextPruneConfig = {
   summarizerModel: "default",
   summarizerThinking: "default",
   pruneOn: "agent-message",
+  pruneStrategy: "summarize",
   remindUnprunedCount: true,
   batchingMode: "turn",
   preserveToolResults: [],
