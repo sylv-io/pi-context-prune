@@ -554,7 +554,7 @@ export default function (pi: ExtensionAPI) {
       currentConfig.value.pruneOn === "agentic-auto" &&
       currentConfig.value.remindUnprunedCount
     ) {
-      const count = countUnprunedToolCalls(messages, indexer, protectedToolCallIds);
+      const count = countUnprunedToolCalls(messages, indexer, protectedToolCallIds, currentConfig.value.preserveToolResults);
       if (count > 0) {
         const annotated = annotateWithUnprunedCount(messages, count, currentConfig.value.protectedTailTokens > 0);
         if (annotated !== messages) {

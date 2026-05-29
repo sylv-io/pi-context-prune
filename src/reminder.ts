@@ -24,6 +24,8 @@
  */
 
 import type { ToolCallIndexer } from "./indexer.js";
+import type { PreserveToolResultRule } from "./types.js";
+import { shouldPreserveToolResult } from "./preserve-tool-results.js";
 
 const PRUNER_NOTE_OPEN = "<pruner-note>";
 const PRUNER_NOTE_CLOSE = "</pruner-note>";
@@ -34,7 +36,12 @@ const PRUNER_NOTE_CLOSE = "</pruner-note>";
  * appears as an `AssistantMessage` `toolCall` content block but is absent
  * from the indexer.
  */
-export function countUnprunedToolCalls(messages: any[], indexer: ToolCallIndexer, protectedToolCallIds = new Set<string>()): number {
+export function countUnprunedToolCalls(
+  messages: any[],
+  indexer: ToolCallIndexer,
+  protectedToolCallIds = new Set<string>(),
+  preserveToolResults: PreserveToolResultRule[] = [],
+): number {
   let count = 0;
   for (const msg of messages) {
     if (msg?.role !== "assistant") continue;
@@ -42,7 +49,10 @@ export function countUnprunedToolCalls(messages: any[], indexer: ToolCallIndexer
     for (const block of msg.content) {
       if (block?.type !== "toolCall") continue;
       const id = block.toolCallId ?? block.id;
+      const toolName = block.toolName ?? block.name;
+      const args = block.args ?? block.input ?? {};
       if (!id || protectedToolCallIds.has(id)) continue;
+      if (typeof toolName === "string" && shouldPreserveToolResult({ toolName, args }, preserveToolResults)) continue;
       if (!indexer.isSummarized(id)) count++;
     }
   }

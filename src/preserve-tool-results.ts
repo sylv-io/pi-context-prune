@@ -1,4 +1,9 @@
-import type { CapturedToolCall, PreserveToolResultRule } from "./types.js";
+import type { PreserveToolResultRule } from "./types.js";
+
+type PreservableToolCall = {
+  toolName: string;
+  args: Record<string, unknown>;
+};
 
 const normalizeForMatch = (value: string): string => value.replace(/\\/g, "/");
 
@@ -73,7 +78,7 @@ const hasConstraint = (rule: PreserveToolResultRule): boolean => {
 };
 
 export function shouldPreserveToolResult(
-  toolCall: CapturedToolCall,
+  toolCall: PreservableToolCall,
   rules: PreserveToolResultRule[] = [],
 ): boolean {
   return rules.some(
