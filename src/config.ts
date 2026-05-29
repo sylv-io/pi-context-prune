@@ -86,5 +86,5 @@ export async function loadConfig(): Promise<ContextPruneConfig> {
 /** Writes the full config to ~/.pi/agent/context-prune/settings.json. */
 export async function saveConfig(config: ContextPruneConfig): Promise<void> {
   await mkdir(dirname(SETTINGS_PATH), { recursive: true });
-  await writeFile(SETTINGS_PATH, JSON.stringify(config, null, 2));
+  await writeFile(SETTINGS_PATH, `${JSON.stringify(config, null, 2)}\n`);
 }
