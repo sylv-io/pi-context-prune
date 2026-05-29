@@ -37,6 +37,7 @@ import { StatsAccumulator } from "./src/stats.js";
 import { registerContextPruneTool } from "./src/context-prune-tool.js";
 import { PruneFrontierTracker } from "./src/frontier.js";
 import { shouldPreserveToolResult } from "./src/preserve-tool-results.js";
+import { computeProtectedTail } from "./src/context-tail.js";
 
 export default function (pi: ExtensionAPI) {
   // Shared mutable config reference — updated by /pruner commands
@@ -525,9 +526,10 @@ export default function (pi: ExtensionAPI) {
     const indexEmpty = indexer.getIndex().size === 0;
     let messages = event.messages;
     let changed = false;
+    const { protectedToolCallIds } = computeProtectedTail(messages, currentConfig.value);
 
     if (!indexEmpty) {
-      const pruned = pruneMessages(messages, indexer);
+      const pruned = pruneMessages(messages, indexer, protectedToolCallIds);
       if (pruned.length !== messages.length) {
         messages = pruned;
         changed = true;
@@ -542,9 +544,9 @@ export default function (pi: ExtensionAPI) {
       currentConfig.value.pruneOn === "agentic-auto" &&
       currentConfig.value.remindUnprunedCount
     ) {
-      const count = countUnprunedToolCalls(messages, indexer);
+      const count = countUnprunedToolCalls(messages, indexer, protectedToolCallIds);
       if (count > 0) {
-        const annotated = annotateWithUnprunedCount(messages, count);
+        const annotated = annotateWithUnprunedCount(messages, count, currentConfig.value.protectedTailTokens > 0);
         if (annotated !== messages) {
           messages = annotated;
           changed = true;

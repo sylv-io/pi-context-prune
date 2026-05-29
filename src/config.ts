@@ -43,6 +43,16 @@ function normalizePreserveToolResults(value: unknown): PreserveToolResultRule[] 
   return value.filter(isPreserveToolResultRule);
 }
 
+function normalizeNonNegativeNumber(value: unknown, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return fallback;
+  return Math.floor(value);
+}
+
+function normalizePositiveNumber(value: unknown, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return fallback;
+  return value;
+}
+
 /** Reads ~/.pi/agent/context-prune/settings.json and returns the config (or defaults). */
 export async function loadConfig(): Promise<ContextPruneConfig> {
   try {
@@ -64,6 +74,8 @@ export async function loadConfig(): Promise<ContextPruneConfig> {
         typeof merged.remindUnprunedCount === "boolean"
           ? merged.remindUnprunedCount
           : DEFAULT_CONFIG.remindUnprunedCount,
+      protectedTailTokens: normalizeNonNegativeNumber(merged.protectedTailTokens, DEFAULT_CONFIG.protectedTailTokens),
+      charsPerToken: normalizePositiveNumber(merged.charsPerToken, DEFAULT_CONFIG.charsPerToken),
       preserveToolResults: normalizePreserveToolResults(merged.preserveToolResults),
     };
   } catch {

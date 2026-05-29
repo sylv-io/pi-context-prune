@@ -34,7 +34,7 @@ const PRUNER_NOTE_CLOSE = "</pruner-note>";
  * appears as an `AssistantMessage` `toolCall` content block but is absent
  * from the indexer.
  */
-export function countUnprunedToolCalls(messages: any[], indexer: ToolCallIndexer): number {
+export function countUnprunedToolCalls(messages: any[], indexer: ToolCallIndexer, protectedToolCallIds = new Set<string>()): number {
   let count = 0;
   for (const msg of messages) {
     if (msg?.role !== "assistant") continue;
@@ -42,7 +42,7 @@ export function countUnprunedToolCalls(messages: any[], indexer: ToolCallIndexer
     for (const block of msg.content) {
       if (block?.type !== "toolCall") continue;
       const id = block.toolCallId ?? block.id;
-      if (!id) continue;
+      if (!id || protectedToolCallIds.has(id)) continue;
       if (!indexer.isSummarized(id)) count++;
     }
   }
@@ -53,8 +53,9 @@ export function countUnprunedToolCalls(messages: any[], indexer: ToolCallIndexer
  * Builds the human-readable reminder line. Wrapped in a tag-like sentinel so
  * the model can clearly distinguish it from real tool output.
  */
-export function buildReminderText(count: number): string {
-  return `${PRUNER_NOTE_OPEN}${count} unpruned tool call result(s) currently in context. Consider calling context_prune after a logical batch of 8–12 related tool calls.${PRUNER_NOTE_CLOSE}`;
+export function buildReminderText(count: number, protectedTailActive = false): string {
+  const scope = protectedTailActive ? " outside the protected context tail" : "";
+  return `${PRUNER_NOTE_OPEN}${count} unpruned tool call result(s)${scope} currently in context. Consider calling context_prune after a logical batch of 8–12 related tool calls.${PRUNER_NOTE_CLOSE}`;
 }
 
 /**
@@ -66,7 +67,7 @@ export function buildReminderText(count: number): string {
  * `content` array, both of which are cloned so we do not mutate Pi's deep-
  * copied event payload in surprising ways.
  */
-export function annotateWithUnprunedCount(messages: any[], count: number): any[] {
+export function annotateWithUnprunedCount(messages: any[], count: number, protectedTailActive = false): any[] {
   if (count <= 0) return messages;
   if (messages.length === 0) return messages;
 
@@ -75,7 +76,7 @@ export function annotateWithUnprunedCount(messages: any[], count: number): any[]
   if (!last || last.role !== "toolResult") return messages;
   if (!Array.isArray(last.content)) return messages;
 
-  const reminder = { type: "text", text: buildReminderText(count) };
+  const reminder = { type: "text", text: buildReminderText(count, protectedTailActive) };
   const clonedLast = {
     ...last,
     content: [...last.content, reminder],

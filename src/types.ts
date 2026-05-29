@@ -183,6 +183,13 @@ export interface ContextPruneConfig {
   batchingMode: BatchingMode;
   /** Tool results that should remain as raw context and never be summarized/pruned. */
   preserveToolResults: PreserveToolResultRule[];
+  /**
+   * Estimated tokens at the end of the final model context that must remain
+   * raw. A value of 0 preserves current behavior.
+   */
+  protectedTailTokens: number;
+  /** Character divisor used by the built-in context-tail token estimator. */
+  charsPerToken: number;
 }
 
 export const DEFAULT_CONFIG: ContextPruneConfig = {
@@ -194,6 +201,8 @@ export const DEFAULT_CONFIG: ContextPruneConfig = {
   remindUnprunedCount: true,
   batchingMode: "turn",
   preserveToolResults: [],
+  protectedTailTokens: 0,
+  charsPerToken: 4,
 };
 
 // ── Captured batch ─────────────────────────────────────────────────────────
