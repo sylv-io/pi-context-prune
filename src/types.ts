@@ -144,6 +144,13 @@ export const PRUNE_ON_MODES: { value: PruneOn; label: string }[] = [
 ];
 
 /** Extension config stored in ~/.pi/agent/context-prune/settings.json */
+export interface PreserveToolResultRule {
+  /** Tool name to preserve. Omit to match any tool. */
+  toolName?: string | string[];
+  /** Glob patterns matched against tool-call args. All configured arg keys must match. */
+  args?: Record<string, string | string[]>;
+}
+
 export interface ContextPruneConfig {
   /** Whether to prune raw tool outputs from future LLM context */
   enabled: boolean;
@@ -174,6 +181,8 @@ export interface ContextPruneConfig {
    *                     (all turns between two user messages are merged)
    */
   batchingMode: BatchingMode;
+  /** Tool results that should remain as raw context and never be summarized/pruned. */
+  preserveToolResults: PreserveToolResultRule[];
 }
 
 export const DEFAULT_CONFIG: ContextPruneConfig = {
@@ -184,6 +193,7 @@ export const DEFAULT_CONFIG: ContextPruneConfig = {
   pruneOn: "agent-message",
   remindUnprunedCount: true,
   batchingMode: "turn",
+  preserveToolResults: [],
 };
 
 // ── Captured batch ─────────────────────────────────────────────────────────

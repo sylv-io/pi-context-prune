@@ -36,6 +36,7 @@ import {
 import { StatsAccumulator } from "./src/stats.js";
 import { registerContextPruneTool } from "./src/context-prune-tool.js";
 import { PruneFrontierTracker } from "./src/frontier.js";
+import { shouldPreserveToolResult } from "./src/preserve-tool-results.js";
 
 export default function (pi: ExtensionAPI) {
   // Shared mutable config reference — updated by /pruner commands
@@ -88,6 +89,10 @@ export default function (pi: ExtensionAPI) {
   const trimBatchToPendingRange = (batch: CapturedBatch): CapturedBatch | null => {
     const currentFrontier = frontier.get();
     let toolCalls = batch.toolCalls;
+
+    // Preserved tool results remain in raw context. Do not summarize or index
+    // them, otherwise the context filter would prune their original output.
+    toolCalls = toolCalls.filter((tc) => !shouldPreserveToolResult(tc, currentConfig.value.preserveToolResults));
 
     // The indexer tells us what was successfully summarized earlier.
     toolCalls = toolCalls.filter((tc) => !indexer.isSummarized(tc.toolCallId));
@@ -161,7 +166,7 @@ export default function (pi: ExtensionAPI) {
 
     // Use pre-captured batches if provided (avoids double-capture when the
     // caller previewed the queue before opening the progress overlay).
-    let batches: CapturedBatch[] = options.previewedBatches ?? capturePendingBatches(ctx);
+    const batches: CapturedBatch[] = options.previewedBatches ?? capturePendingBatches(ctx);
 
     if (batches.length === 0) return { ok: false, reason: "empty" };
 

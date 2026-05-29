@@ -1,7 +1,7 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
-import type { ContextPruneConfig, PruneOn, SummarizerThinking } from "./types.js";
+import type { ContextPruneConfig, PreserveToolResultRule, PruneOn, SummarizerThinking } from "./types.js";
 import { DEFAULT_CONFIG, PRUNE_ON_MODES, SUMMARIZER_THINKING_LEVELS } from "./types.js";
 
 /** Path to the extension's own settings file, independent of any project. */
@@ -13,6 +13,34 @@ function isPruneOn(value: unknown): value is PruneOn {
 
 function isSummarizerThinking(value: unknown): value is SummarizerThinking {
   return typeof value === "string" && SUMMARIZER_THINKING_LEVELS.some((level) => level.value === value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function isStringOrStringArray(value: unknown): value is string | string[] {
+  return isNonEmptyString(value) || (Array.isArray(value) && value.length > 0 && value.every(isNonEmptyString));
+}
+
+function isPreserveToolResultRule(value: unknown): value is PreserveToolResultRule {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+
+  const rule = value as Record<string, unknown>;
+  if (rule.toolName === undefined && rule.args === undefined) return false;
+  if (rule.toolName !== undefined && !isStringOrStringArray(rule.toolName)) return false;
+  if (rule.args !== undefined) {
+    if (!rule.args || typeof rule.args !== "object" || Array.isArray(rule.args)) return false;
+    const argPatterns = Object.values(rule.args);
+    if (argPatterns.length === 0 || !argPatterns.every(isStringOrStringArray)) return false;
+  }
+
+  return true;
+}
+
+function normalizePreserveToolResults(value: unknown): PreserveToolResultRule[] {
+  if (!Array.isArray(value)) return DEFAULT_CONFIG.preserveToolResults;
+  return value.filter(isPreserveToolResultRule);
 }
 
 /** Reads ~/.pi/agent/context-prune/settings.json and returns the config (or defaults). */
@@ -36,6 +64,7 @@ export async function loadConfig(): Promise<ContextPruneConfig> {
         typeof merged.remindUnprunedCount === "boolean"
           ? merged.remindUnprunedCount
           : DEFAULT_CONFIG.remindUnprunedCount,
+      preserveToolResults: normalizePreserveToolResults(merged.preserveToolResults),
     };
   } catch {
     return { ...DEFAULT_CONFIG };

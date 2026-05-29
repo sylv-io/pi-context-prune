@@ -196,7 +196,8 @@ Config is stored in `~/.pi/agent/context-prune/settings.json` (global, project-i
   "summarizerModel": "default",
   "summarizerThinking": "default",
   "pruneOn": "agent-message",
-  "remindUnprunedCount": true
+  "remindUnprunedCount": true,
+  "preserveToolResults": []
 }
 ```
 
@@ -208,6 +209,7 @@ Config is stored in `~/.pi/agent/context-prune/settings.json` (global, project-i
 | `summarizerThinking` | `"default"`, `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` | `"default"` |
 | `pruneOn` | `"every-turn"`, `"on-context-tag"`, `"on-demand"`, `"agent-message"`, `"agentic-auto"` | `"agent-message"` |
 | `remindUnprunedCount` | `true` / `false` | `true` |
+| `preserveToolResults` | Array of tool-name and arg glob rules | `[]` |
 
 - `showPruneStatusLine: true` keeps the prune footer widget and the automatic queued-turn notice visible. Turn it off if you want pruning to stay active without the extra status noise.
 - `remindUnprunedCount: true` appends a small ephemeral `<pruner-note>` to the last tool result before each LLM call to remind the model of the number of unpruned tool calls in context. This only has an effect when `pruneOn` is set to `"agentic-auto"`.
@@ -216,7 +218,23 @@ Config is stored in `~/.pi/agent/context-prune/settings.json` (global, project-i
 - `summarizerThinking: "default"` preserves old behavior: no explicit thinking/reasoning option is added to summarizer calls.
 - `summarizerThinking: "off"` requests no summarizer reasoning where the provider adapter supports an explicit disable path. Some providers may still fall back to their own default behavior.
 - `"minimal"`, `"low"`, `"medium"`, `"high"`, and `"xhigh"` request that thinking level for summarizer calls where supported. For cheap background summarization, prefer `"minimal"` or `"low"` with a small/fast model.
+- `preserveToolResults` keeps matching tool results as raw context. Matching results are not summarized, not indexed as summarized, and not pruned later. Rules match exact `toolName` strings and glob patterns over selected string arg values. All configured arg keys must match. Unless you configure rules, no tool results are preserved.
 - Settings are persisted on every change via the `/pruner` command or the settings overlay.
+
+Example for preserving skill instruction files loaded by `read`:
+
+```json
+{
+  "preserveToolResults": [
+    {
+      "toolName": "read",
+      "args": {
+        "path": ["**/SKILL.md", "**/references/*.md"]
+      }
+    }
+  ]
+}
+```
 
 ### Choosing a Summarizer Model
 
