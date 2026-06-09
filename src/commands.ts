@@ -13,7 +13,7 @@ import {
   TOKENIZER_ENCODINGS,
 } from "./types.js";
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
-import { saveConfig } from "./config.js";
+import { SETTINGS_PATH, type ConfigState } from "./config.js";
 import { formatTokens, formatCost, formatCharProgress } from "./stats.js";
 import { Container, Text, SettingsList, type SettingItem } from "@mariozechner/pi-tui";
 import { DynamicBorder, getSettingsListTheme } from "@mariozechner/pi-coding-agent";
@@ -251,7 +251,8 @@ Related:
   - pi-context extension (provides context_tag): https://github.com/ttttmr/pi-context
   - Anthropic prompt caching docs: https://docs.claude.com/en/docs/build-with-claude/prompt-caching
 
-Settings are saved to ~/.pi/agent/context-prune/settings.json`;
+Settings are saved to the active scope: <project>/.pi/context-prune/settings.json when present,
+otherwise ~/.pi/agent/context-prune/settings.json`;
 
 // ── Pruner progress widget ────────────────────────────────────────────────────
 
@@ -385,6 +386,8 @@ export function registerCommands(
   syncToolActivation: () => void,
   getStats: () => SummarizerStats,
   indexer: ToolCallIndexer,
+  getConfigState: () => ConfigState,
+  updateConfig: (patch: Partial<ContextPruneConfig>) => Promise<void>,
 ): void {
   // Register the /pruner command
   pi.registerCommand("pruner", {
@@ -406,6 +409,12 @@ export function registerCommands(
         // Extract the value (first word) from the label like "settings — interactive settings overlay"
         subcommand = choice.split(/\s+/)[0];
       }
+
+      const applyConfigPatch = async (patch: Partial<ContextPruneConfig>) => {
+        await updateConfig(patch);
+        setPruneStatusWidget(ctx, currentConfig.value, getStats());
+        syncToolActivation();
+      };
 
       switch (subcommand) {
         // ── /pruner settings ── interactive overlay ──
@@ -581,12 +590,12 @@ export function registerCommands(
                 batchingItem.description = batchingModeDescription(newConfig.batchingMode);
               }
             }
-            currentConfig.value = newConfig;
-            saveConfig(newConfig);
-            setPruneStatusWidget(ctx, newConfig, getStats());
-            settingsList?.invalidate();
-            // Toggle context_prune tool activation when config changes
-            syncToolActivation();
+            void applyConfigPatch({ [id]: newConfig[id as keyof ContextPruneConfig] } as Partial<ContextPruneConfig>)
+              .then(() => settingsList?.invalidate())
+              .catch((err) => ctx.ui.notify(
+                `Failed to save pruner setting: ${err instanceof Error ? err.message : String(err)}`,
+                "error",
+              ));
           };
 
           settingsList = new SettingsList(
@@ -617,21 +626,15 @@ export function registerCommands(
 
         // ── /pruner on ──
         case "on": {
-          currentConfig.value = { ...currentConfig.value, enabled: true };
-          saveConfig(currentConfig.value);
+          await applyConfigPatch({ enabled: true });
           ctx.ui.notify("Context pruning enabled.");
-          setPruneStatusWidget(ctx, currentConfig.value, getStats());
-          syncToolActivation();
           break;
         }
 
         // ── /pruner off ──
         case "off": {
-          currentConfig.value = { ...currentConfig.value, enabled: false };
-          saveConfig(currentConfig.value);
+          await applyConfigPatch({ enabled: false });
           ctx.ui.notify("Context pruning disabled.");
-          setPruneStatusWidget(ctx, currentConfig.value, getStats());
-          syncToolActivation();
           break;
         }
 
@@ -640,11 +643,36 @@ export function registerCommands(
           const cfg = currentConfig.value;
           const mode = PRUNE_ON_MODES.find((m) => m.value === cfg.pruneOn)?.label ?? cfg.pruneOn;
           const s = getStats();
+          const state = getConfigState();
+          const projectFields = Object.keys(state.project ?? {});
+          const overrideSuffix = projectFields.length === 1 ? "" : "s";
+          const projectLine = state.projectPath
+            ? `\n  project:  ${state.projectPath}`
+              + `\n  scope:    project config active (${projectFields.length} override${overrideSuffix})`
+            : "\n  project:  none\n  scope:    global config";
+          const projectPreserveCount = state.project?.preserveToolResults?.length ?? 0;
+          const projectPreservePart = state.projectPath ? `, ${projectPreserveCount} project` : "";
+          const preserveLine =
+            `\n  preserve rules: ${cfg.preserveToolResults.length} effective `
+            + `(${state.global.preserveToolResults.length} global${projectPreservePart})`;
           const statsLine = s.callCount > 0
             ? `\n  --- summarizer ---\n  calls:       ${s.callCount}\n  input:       ${formatTokens(s.totalInputTokens)} tokens\n  output:      ${formatTokens(s.totalOutputTokens)} tokens\n  cost:        ${formatCost(s.totalCost)}`
             : "\n  (no summarizer calls yet)";
           ctx.ui.notify(
-            `pruner status:\n  enabled:  ${cfg.enabled}\n  strategy: ${pruneStrategyLabel(cfg.pruneStrategy)} (${cfg.pruneStrategy})\n  model:    ${cfg.summarizerModel}\n  thinking: ${summarizerThinkingLabel(cfg.summarizerThinking)} (${cfg.summarizerThinking})\n  trigger:  ${mode}\n  batching: ${batchingModeLabel(cfg.batchingMode)} (${cfg.batchingMode})\n  status:   ${cfg.showPruneStatusLine ? "on" : "off"}\n  remind:   ${cfg.remindUnprunedCount ? "on" : "off"} (agentic-auto only)\n  protected context tail: ${formatTokens(cfg.protectedTailTokens)} estimated tokens\n  token estimator: ${tokenEstimatorLabel(cfg.tokenEstimator)} (${cfg.tokenEstimator})\n  tokenizer encoding: ${tokenizerEncodingLabel(cfg.tokenizerEncoding)}\n  chars per token: ${cfg.charsPerToken}${statsLine}`,
+            `pruner status:\n  global:   ${SETTINGS_PATH}${projectLine}`
+              + `\n  merge:    project overrides global per field`
+              + `\n  enabled:  ${cfg.enabled}`
+              + `\n  strategy: ${pruneStrategyLabel(cfg.pruneStrategy)} (${cfg.pruneStrategy})`
+              + `\n  model:    ${cfg.summarizerModel}`
+              + `\n  thinking: ${summarizerThinkingLabel(cfg.summarizerThinking)} (${cfg.summarizerThinking})`
+              + `\n  trigger:  ${mode}`
+              + `\n  batching: ${batchingModeLabel(cfg.batchingMode)} (${cfg.batchingMode})`
+              + `\n  status:   ${cfg.showPruneStatusLine ? "on" : "off"}`
+              + `\n  remind:   ${cfg.remindUnprunedCount ? "on" : "off"} (agentic-auto only)`
+              + `\n  protected context tail: ${formatTokens(cfg.protectedTailTokens)} estimated tokens`
+              + `\n  token estimator: ${tokenEstimatorLabel(cfg.tokenEstimator)} (${cfg.tokenEstimator})`
+              + `\n  tokenizer encoding: ${tokenizerEncodingLabel(cfg.tokenizerEncoding)}`
+              + `\n  chars per token: ${cfg.charsPerToken}${preserveLine}${statsLine}`,
           );
           break;
         }
@@ -696,12 +724,10 @@ export function registerCommands(
               ctx.ui.notify(parsed.error, "warning");
               return;
             }
-            currentConfig.value = {
-              ...currentConfig.value,
+            await applyConfigPatch({
               summarizerModel: parsed.model,
-              summarizerThinking: parsed.thinking ?? currentConfig.value.summarizerThinking,
-            };
-            saveConfig(currentConfig.value);
+              ...(parsed.thinking ? { summarizerThinking: parsed.thinking } : {}),
+            });
             const thinkingText = parsed.thinking ? ` with thinking ${parsed.thinking}` : "";
             ctx.ui.notify(`Summarizer model set to: ${parsed.model}${thinkingText}`);
           }
@@ -718,10 +744,7 @@ export function registerCommands(
             return;
           }
           if (SUMMARIZER_THINKING_LEVELS.some((level) => level.value === thinkingArg)) {
-            currentConfig.value = {
-              ...currentConfig.value,
-              summarizerThinking: thinkingArg as ContextPruneConfig["summarizerThinking"],
-            };
+            await applyConfigPatch({ summarizerThinking: thinkingArg as ContextPruneConfig["summarizerThinking"] });
           } else {
             ctx.ui.notify(
               `Invalid summarizer thinking level: ${thinkingArg}. Use one of: ${SUMMARIZER_THINKING_LEVELS.map((level) => level.value).join(", ")}.`,
@@ -729,7 +752,6 @@ export function registerCommands(
             );
             return;
           }
-          saveConfig(currentConfig.value);
           ctx.ui.notify(`Summarizer thinking set to: ${currentConfig.value.summarizerThinking}`);
           break;
         }
@@ -743,13 +765,17 @@ export function registerCommands(
             if (!choice) return;
             // Extract the value (first word) from "every-turn — Every turn"
             const chosenValue = choice.split(/\s+/)[0] as ContextPruneConfig["pruneOn"];
-            currentConfig.value = { ...currentConfig.value, pruneOn: chosenValue };
+            await applyConfigPatch({ pruneOn: chosenValue });
           } else {
-            currentConfig.value = { ...currentConfig.value, pruneOn: modeArg as ContextPruneConfig["pruneOn"] };
+            if (!PRUNE_ON_MODES.some((m) => m.value === modeArg)) {
+              ctx.ui.notify(
+                `Invalid prune trigger: ${modeArg}. Use one of: ${PRUNE_ON_MODES.map((m) => m.value).join(", ")}.`,
+                "warning",
+              );
+              return;
+            }
+            await applyConfigPatch({ pruneOn: modeArg as ContextPruneConfig["pruneOn"] });
           }
-          saveConfig(currentConfig.value);
-          setPruneStatusWidget(ctx, currentConfig.value, getStats());
-          syncToolActivation();
           break;
         }
 
@@ -761,7 +787,7 @@ export function registerCommands(
             const choice = await ctx.ui.select("pruner — choose batching granularity", options);
             if (!choice) return;
             const chosenValue = choice.split(/\s+/)[0] as ContextPruneConfig["batchingMode"];
-            currentConfig.value = { ...currentConfig.value, batchingMode: chosenValue };
+            await applyConfigPatch({ batchingMode: chosenValue });
           } else {
             if (!BATCHING_MODES.some((m) => m.value === batchArg)) {
               ctx.ui.notify(
@@ -770,9 +796,8 @@ export function registerCommands(
               );
               return;
             }
-            currentConfig.value = { ...currentConfig.value, batchingMode: batchArg as ContextPruneConfig["batchingMode"] };
+            await applyConfigPatch({ batchingMode: batchArg as ContextPruneConfig["batchingMode"] });
           }
-          saveConfig(currentConfig.value);
           ctx.ui.notify(`Batching mode set to: ${batchingModeLabel(currentConfig.value.batchingMode)}`);
           break;
         }

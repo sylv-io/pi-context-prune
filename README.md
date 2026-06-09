@@ -181,7 +181,7 @@ The tool is guided by a system prompt that instructs the model to use it after c
 
 ## Configuration
 
-Config is stored in `~/.pi/agent/context-prune/settings.json` (global, project-independent):
+Global config is stored in `~/.pi/agent/context-prune/settings.json`:
 
 ```json
 {
@@ -223,7 +223,12 @@ Config is stored in `~/.pi/agent/context-prune/settings.json` (global, project-i
 - `tokenEstimator: "auto"` uses `js-tiktoken` with `tokenizerEncoding` when available, then falls back to a character estimate. Use `"chars"` for deterministic character-based estimates.
 - `charsPerToken` controls the character estimator used by `tokenEstimator: "chars"` and the tiktoken fallback.
 - Default `tokenEstimator` and `tokenizerEncoding` values are optional and omitted when settings are saved.
-- Settings are persisted on every change via the `/pruner` command or the settings overlay.
+- Project config can be stored in `<project>/.pi/context-prune/settings.json`.
+  It is partial, and any key present there overrides the global value for that
+  project. Arrays are replaced, not appended.
+- Settings are persisted on every change via the `/pruner` command or the
+  settings overlay. When project config is active, changes are saved to the
+  project file.
 
 Example for preserving skill instruction files loaded by `read`:
 

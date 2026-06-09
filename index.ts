@@ -14,7 +14,15 @@
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { loadConfig } from "./src/config.js";
+import {
+  loadConfigState,
+  mergeConfig,
+  normalizeConfig,
+  normalizeConfigPatch,
+  saveConfig,
+  saveProjectConfig,
+  type ConfigState,
+} from "./src/config.js";
 import { captureBatch, captureUnindexedBatchesFromSession, groupBatchesByMode } from "./src/batch-capture.js";
 import { summarizeBatch, summarizeBatches } from "./src/summarizer.js";
 import { ToolCallIndexer } from "./src/indexer.js";
@@ -45,6 +53,9 @@ export default function (pi: ExtensionAPI) {
   const currentConfig: { value: ContextPruneConfig } = {
     value: { ...DEFAULT_CONFIG, pruneOn: "every-turn" },
   };
+  const configState: { value: ConfigState } = {
+    value: { global: { ...DEFAULT_CONFIG }, effective: currentConfig.value },
+  };
 
   // Shared indexer — rebuilt from session on every session_start / session_tree
   const indexer = new ToolCallIndexer();
@@ -72,6 +83,25 @@ export default function (pi: ExtensionAPI) {
     err instanceof Error && err.message.includes("This extension ctx is stale");
 
   const errorMessage = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+  const reloadConfig = async (ctx: any) => {
+    configState.value = await loadConfigState(ctx.cwd ?? process.cwd());
+    currentConfig.value = configState.value.effective;
+  };
+
+  const updateConfig = async (patch: Partial<ContextPruneConfig>) => {
+    const state = configState.value;
+    if (state.projectPath) {
+      const project = normalizeConfigPatch({ ...(state.project ?? {}), ...patch });
+      await saveProjectConfig(state.projectPath, project);
+      configState.value = { ...state, project, effective: mergeConfig(state.global, project) };
+    } else {
+      const global = normalizeConfig({ ...state.global, ...patch });
+      await saveConfig(global);
+      configState.value = { global, effective: mergeConfig(global) };
+    }
+    currentConfig.value = configState.value.effective;
+  };
 
   const safeNotify = (ctx: any, message: string, type: "info" | "warning" | "error" = "info") => {
     try {
@@ -403,8 +433,8 @@ export default function (pi: ExtensionAPI) {
 
   // ── session_start: restore config + index + stats ────────────────────────────────
   pi.on("session_start", async (_event, ctx) => {
-    // Load config from ~/.pi/agent/context-prune/settings.json
-    currentConfig.value = await loadConfig();
+    // Load global config and optional <project>/.pi/context-prune/settings.json
+    await reloadConfig(ctx);
 
     // Rebuild in-memory index from persisted session entries
     indexer.reconstructFromSession(ctx);
@@ -430,13 +460,16 @@ export default function (pi: ExtensionAPI) {
     );
   });
 
-  // Rebuild index and stats after tree navigation too (branch may have different history)
+  // Rebuild config, index, and stats after tree navigation too (branch may have different history)
   pi.on("session_tree", async (_event, ctx) => {
+    await reloadConfig(ctx);
     indexer.reconstructFromSession(ctx);
     statsAccum.reconstructFromSession(ctx);
     frontier.reconstructFromSession(ctx);
     // Pending batches belong to the old branch — discard them
     pendingBatches.length = 0;
+    setPruneStatusWidget(ctx, currentConfig.value, statsAccum.getStats());
+    syncToolActivation();
   });
 
   // ── turn_end: capture batch, flush immediately or queue ──────────────────
@@ -585,5 +618,15 @@ export default function (pi: ExtensionAPI) {
   registerContextPruneTool(pi, (ctx, options) => flushPending(ctx, { delivery: "runtime", ...options }));
 
   // ── Register /pruner command + summary message renderer ────────────
-  registerCommands(pi, currentConfig, flushPending, capturePendingBatches, syncToolActivation, () => statsAccum.getStats(), indexer);
+  registerCommands(
+    pi,
+    currentConfig,
+    flushPending,
+    capturePendingBatches,
+    syncToolActivation,
+    () => statsAccum.getStats(),
+    indexer,
+    () => configState.value,
+    updateConfig,
+  );
 }
