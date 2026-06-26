@@ -6,7 +6,7 @@
 - Scope: `pi-context-prune`
 - Source session: `019f03ac-1d93-7308-beae-1bc80133ad5f`
 - Cache export: `/home/sylv/.pi/agent/2026-06-26T11-23-59-251Z_019f03ac-1d93-7308-beae-1bc80133ad5f.csv`
-- State: planning only. No implementation is approved by this document.
+- State: first pass implemented and committed. Remaining work is observation.
 
 ## Goal
 
@@ -24,7 +24,8 @@ new policy system.
 - Add only the diagnostics needed to make tuning decisions.
 - Keep recovery through `context_tree_query`, but do not assume recovery is
   equivalent to preserving full raw output.
-- Use project-local experiments for settings that could affect unrelated work.
+- Keep tuning changes explicit in the active configuration so the effective
+  behavior is easy to inspect.
 
 ## Baseline findings
 
@@ -66,8 +67,8 @@ avoid overengineering.
   analyzer until manual analysis becomes painful.
 - Minimum prune guard: use a simple combined guard based on raw-token threshold
   or tool-count threshold.
-- Protected tail: test `protectedTailTokens: 16000` through a project-scope
-  override, not a global setting change.
+- Protected tail: set `protectedTailTokens: 16000` in the active global
+  configuration for this environment.
 - Preserve rules: preserve instruction-file reads only. Keep non-read preserve
   rules unchanged.
 - Adaptive trigger: keep `agent-message`; do not add an adaptive threshold
@@ -95,8 +96,7 @@ only the findings needed for a practical first pass.
 - Below-threshold skips must not advance the prune frontier.
 - Diagnostics should be append-only custom entries that do not enter model
   context.
-- The protected-tail experiment must be project-local and should use fresh
-  sessions where possible.
+- The protected-tail change should use fresh sessions where possible.
 - Removing broad docs preservation is a fidelity tradeoff because
   `context_tree_query` may truncate large recovered outputs.
 - Preserve-rule changes should narrow read-tool doc globs only. They should not
@@ -227,7 +227,7 @@ Keep the behavior predictable:
 - `/pruner now --force` can flush a below-threshold batch.
 - The frontier is unchanged after a below-threshold skip.
 
-## Workstream 3: Project-local protected-tail experiment
+## Workstream 3: Global protected-tail tuning
 
 ### Protected-tail objective
 
@@ -235,14 +235,13 @@ Reduce retained raw context while keeping recent tool evidence available.
 
 ### Protected-tail decision
 
-Test `protectedTailTokens: 16000`, but only as a project-scope override.
-
-Do not change the global config for this experiment.
+Set `protectedTailTokens: 16000` in the active global configuration for this
+environment.
 
 ### Plan
 
-- Add or modify the project-local config under `.pi/context-prune/settings.json`.
-- Set `protectedTailTokens` to `16000` for this project only.
+- Modify the global config under `context-prune/settings.json`.
+- Set `protectedTailTokens` to `16000`.
 - Prefer fresh sessions for comparison so old frontier/index state does not
   contaminate the result.
 - Compare normal usage against the current `24000` baseline.
@@ -264,15 +263,14 @@ metric because suffix size changes the denominator.
 ### Protected-tail baseline TODOs
 
 - [x] Record `protectedTailTokens` in diagnostics.
-- [x] Add a project-scope override for `16000` only when this experiment is
-      approved.
+- [x] Set the global protected tail to `16000` for this environment.
 - [x] Use a reloaded session for initial observation.
 - [x] Compare prompt size and obvious relevance behavior.
 - [ ] Revert to `24000` if relevance suffers.
 
 ### Protected-tail acceptance criteria
 
-- The experiment does not change global behavior outside this project.
+- The configured environment uses `16000` as the protected tail.
 - `16000` reduces protected raw context or prompt size in comparable usage.
 - The model can still recover older output with `context_tree_query` when needed.
 - Any relevance regression is documented and used to decide whether to revert.
@@ -295,7 +293,7 @@ Instruction-file read globs should include:
 "**/AGENTS.md"
 ```
 
-Remove broad generic documentation globs from the active project config, such as:
+Remove broad generic documentation globs from the active config, such as:
 
 ```json
 "**/docs/*.md",
@@ -316,8 +314,8 @@ that were preserved before the change.
 
 ### Preserve-rules baseline TODOs
 
-- [x] Confirm the effective preserve rules from global and project scope.
-- [x] Remove only broad read-tool docs globs from the active project config.
+- [x] Confirm the effective preserve rules from the active global config.
+- [x] Remove only broad read-tool docs globs from the active config.
 - [x] Keep instruction-file read globs.
 - [x] Keep non-read tool preserve rules unchanged.
 - [ ] Defer preserve-rule match counts until diagnostics need more detail.
@@ -348,7 +346,7 @@ once after a final assistant response, which should be less disruptive to prompt
 cache than frequent pruning.
 
 The analyzed session did show large prompt peaks, but the first pass should use
-minimal diagnostics, a simple guard, a smaller project-local protected tail, and
+minimal diagnostics, a simple guard, a smaller global protected tail, and
 narrower preserve rules before adding another trigger.
 
 ### Trigger baseline TODOs
@@ -396,8 +394,8 @@ Defer these ideas:
 
 1. Add minimal diagnostics.
 2. Add the simple minimum prune guard.
-3. Narrow read-tool preserve rules in project config.
-4. Test `protectedTailTokens: 16000` in project config.
+3. Narrow read-tool preserve rules in global config.
+4. Set `protectedTailTokens: 16000` in global config.
 5. Observe real usage.
 6. Revisit analyzer, adaptive trigger, or recovery improvements only if needed.
 
@@ -407,10 +405,10 @@ For each implemented workstream:
 
 - [x] Run any available TypeScript or project validation.
 - [x] Add a focused script or test when no validation exists.
-- [ ] Run the extension in a short session with several tool calls.
-- [ ] Confirm pruned output can be recovered with `context_tree_query`.
-- [ ] Confirm diagnostics do not enter model-facing context.
-- [ ] Confirm frontier behavior after below-threshold skips.
+- [x] Run the extension in a short session with several tool calls.
+- [x] Confirm pruned output can be recovered with `context_tree_query`.
+- [x] Confirm diagnostics do not enter model-facing context.
+- [x] Confirm frontier behavior after below-threshold skips.
 - [ ] Compare against the baseline session metrics in this document when relevant.
 
 ## Approval gate
