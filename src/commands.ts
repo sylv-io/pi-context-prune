@@ -3,6 +3,7 @@ import {
   type SummarizerStats,
   type CapturedBatch,
   type FlushOptions,
+  type PruneDiagnostic,
   PRUNE_ON_MODES,
   PRUNE_STRATEGY_MODES,
   BATCHING_MODES,
@@ -14,7 +15,7 @@ import {
 } from "./types.js";
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import { SETTINGS_PATH, type ConfigState } from "./config.js";
-import { formatTokens, formatCost, formatCharProgress } from "./stats.js";
+import { formatTokens, formatCost, formatCharProgress, formatCompactCount } from "./stats.js";
 import { Container, Text, SettingsList, type SettingItem } from "@mariozechner/pi-tui";
 import { DynamicBorder, getSettingsListTheme } from "@mariozechner/pi-coding-agent";
 import { buildPruneTree, TreeBrowser } from "./tree-browser.js";
@@ -82,6 +83,7 @@ const SUBCOMMANDS = [
   { value: "prune-on", label: "prune-on  — show or set the trigger mode" },
   { value: "batching", label: "batching  — show or set the batching mode (turn / agent-message)" },
   { value: "stats",   label: "stats     — show cumulative summarizer token/cost stats" },
+  { value: "diagnostics", label: "diagnostics — show recent prune attempts and totals" },
   { value: "tree",    label: "tree      — browse pruned tool calls in a foldable tree" },
   { value: "now",     label: "now       — flush pending tool calls immediately (widget progress)" },
   { value: "help",    label: "help      — show this help" },
@@ -221,8 +223,9 @@ Usage:
   /pruner batching turn                    One summary per assistant turn (default)
   /pruner batching agent-message           One summary per user→final-agent-message span (merges all turns in a span)
   /pruner stats                            Show cumulative summarizer token/cost stats
+  /pruner diagnostics                      Show recent prune attempts and cumulative prune totals
   /pruner tree                             Browse pruned tool calls in a foldable tree (Ctrl-O opens selected summary)
-  /pruner now                              Flush pending tool calls immediately (shows live footer progress)
+  /pruner now [--force]                    Flush pending tool calls; --force bypasses the minimum guard
   /pruner help                             Show this help
 
 Agentic-auto reminder:
@@ -375,6 +378,44 @@ function startPrunerWidget(
 
 // ── Command registration ────────────────────────────────────────────────────
 
+function formatPruneDiagnostics(entries: PruneDiagnostic[]): string {
+  if (entries.length === 0) return "pruner diagnostics: no prune attempts recorded yet.";
+
+  const totals = entries.reduce(
+    (acc, entry) => {
+      acc.attempts += 1;
+      if (entry.skipReason) acc.skipped += 1;
+      acc.batches += entry.attemptedBatchCount;
+      acc.eligible += entry.eligibleToolCallCount;
+      acc.pruned += entry.prunedToolCallCount;
+      acc.rawChars += entry.rawCharCount;
+      acc.rawTokens += entry.estimatedRawTokens;
+      acc.replacementChars += entry.replacementCharCount;
+      acc.replacementTokens += entry.estimatedReplacementTokens;
+      return acc;
+    },
+    {
+      attempts: 0,
+      skipped: 0,
+      batches: 0,
+      eligible: 0,
+      pruned: 0,
+      rawChars: 0,
+      rawTokens: 0,
+      replacementChars: 0,
+      replacementTokens: 0,
+    },
+  );
+
+  const recent = entries.slice(-8).map((entry) => {
+    const time = new Date(entry.timestamp).toLocaleTimeString();
+    const outcome = entry.skipReason ? `skipped:${entry.skipReason}` : entry.frontierOutcome ?? "flushed";
+    return `  - ${time} ${outcome} · ${entry.prunedToolCallCount}/${entry.eligibleToolCallCount} tools · raw ${formatCompactCount(entry.rawCharCount)} chars (~${formatTokens(entry.estimatedRawTokens)} tok) → ${formatCompactCount(entry.replacementCharCount)} chars (~${formatTokens(entry.estimatedReplacementTokens)} tok)`;
+  });
+
+  return `pruner diagnostics:\n  attempts:    ${totals.attempts} (${totals.skipped} skipped)\n  batches:     ${totals.batches}\n  tools:       ${totals.pruned} pruned / ${totals.eligible} eligible\n  raw:         ${formatCompactCount(totals.rawChars)} chars (~${formatTokens(totals.rawTokens)} tokens)\n  replacement: ${formatCompactCount(totals.replacementChars)} chars (~${formatTokens(totals.replacementTokens)} tokens)\n  recent:\n${recent.join("\n")}`;
+}
+
 export function registerCommands(
   pi: ExtensionAPI,
   currentConfig: { value: ContextPruneConfig },
@@ -385,6 +426,7 @@ export function registerCommands(
   capturePendingBatches: (ctx: ExtensionCommandContext) => CapturedBatch[],
   syncToolActivation: () => void,
   getStats: () => SummarizerStats,
+  getDiagnostics: () => PruneDiagnostic[],
   indexer: ToolCallIndexer,
   getConfigState: () => ConfigState,
   updateConfig: (patch: Partial<ContextPruneConfig>) => Promise<void>,
@@ -670,10 +712,17 @@ export function registerCommands(
               + `\n  status:   ${cfg.showPruneStatusLine ? "on" : "off"}`
               + `\n  remind:   ${cfg.remindUnprunedCount ? "on" : "off"} (agentic-auto only)`
               + `\n  protected context tail: ${formatTokens(cfg.protectedTailTokens)} estimated tokens`
+              + `\n  minimum prune: ${formatTokens(cfg.minPruneRawTokens)} raw tokens or ${cfg.minPruneToolCalls} tool calls`
               + `\n  token estimator: ${tokenEstimatorLabel(cfg.tokenEstimator)} (${cfg.tokenEstimator})`
               + `\n  tokenizer encoding: ${tokenizerEncodingLabel(cfg.tokenizerEncoding)}`
               + `\n  chars per token: ${cfg.charsPerToken}${preserveLine}${statsLine}`,
           );
+          break;
+        }
+
+        // ── /pruner diagnostics ──
+        case "diagnostics": {
+          ctx.ui.notify(formatPruneDiagnostics(getDiagnostics()));
           break;
         }
 
@@ -804,6 +853,7 @@ export function registerCommands(
 
         // ── /pruner now ──
         case "now": {
+          const force = subArgs.includes("--force");
           if (!currentConfig.value.enabled) {
             ctx.ui.notify("Context pruning is disabled. Run /pruner on first.", "warning");
             return;
@@ -821,6 +871,7 @@ export function registerCommands(
 
           const result = await flushPending(ctx, {
             previewedBatches: batches,
+            force,
             onProgress: (index, _total, _batch, stage) => {
               if (stage === "start") {
                 updateRow(index, "running", 0);
@@ -841,7 +892,13 @@ export function registerCommands(
 
           if (!result.ok) {
             const suffix = "error" in result && result.error ? ` (${result.error})` : "";
-            ctx.ui.notify(`pruner: nothing flushed — ${result.reason}${suffix}`, result.reason === "empty" ? "info" : "warning");
+            const hint = result.reason === "below-threshold"
+              ? " — use /pruner now --force to bypass the minimum guard"
+              : "";
+            ctx.ui.notify(
+              `pruner: nothing flushed — ${result.reason}${suffix}${hint}`,
+              result.reason === "empty" || result.reason === "below-threshold" ? "info" : "warning",
+            );
             break;
           }
 

@@ -23,16 +23,34 @@ import {
   saveProjectConfig,
   type ConfigState,
 } from "./src/config.js";
-import { captureBatch, captureUnindexedBatchesFromSession, groupBatchesByMode } from "./src/batch-capture.js";
+import {
+  captureBatch,
+  captureUnindexedBatchesFromSession,
+  groupBatchesByMode,
+} from "./src/batch-capture.js";
 import { summarizeBatch, summarizeBatches } from "./src/summarizer.js";
 import { ToolCallIndexer } from "./src/indexer.js";
 import { pruneMessages } from "./src/pruner.js";
-import { annotateWithUnprunedCount, countUnprunedToolCalls } from "./src/reminder.js";
+import {
+  annotateWithUnprunedCount,
+  countUnprunedToolCalls,
+} from "./src/reminder.js";
 import { registerQueryTool } from "./src/query-tool.js";
 import { registerCommands, setPruneStatusWidget } from "./src/commands.js";
-import { formatSummaryToolCallRefs, makeSummaryDetails } from "./src/summary-refs.js";
+import {
+  formatSummaryToolCallRefs,
+  makeSummaryDetails,
+} from "./src/summary-refs.js";
 import { renderPlaceholderSummary } from "./src/placeholder.js";
-import type { ContextPruneConfig, CapturedBatch, IndexEntryData, PruneFrontier, FlushOptions } from "./src/types.js";
+import type {
+  ContextPruneConfig,
+  CapturedBatch,
+  IndexEntryData,
+  PruneFrontier,
+  FlushOptions,
+  PruneDiagnostic,
+  SummarizerStats,
+} from "./src/types.js";
 import {
   DEFAULT_CONFIG,
   CONTEXT_PRUNE_TOOL_NAME,
@@ -47,6 +65,9 @@ import { registerContextPruneTool } from "./src/context-prune-tool.js";
 import { PruneFrontierTracker } from "./src/frontier.js";
 import { shouldPreserveToolResult } from "./src/preserve-tool-results.js";
 import { computeProtectedTail } from "./src/context-tail.js";
+import { estimateTokens } from "./src/token-estimator.js";
+import { PruneDiagnosticsStore } from "./src/diagnostics.js";
+import { evaluatePruneGuard } from "./src/prune-guard.js";
 
 export default function (pi: ExtensionAPI) {
   // Shared mutable config reference — updated by /pruner commands
@@ -66,23 +87,101 @@ export default function (pi: ExtensionAPI) {
   // Shared prune frontier — tracks the last completed prune attempt boundary
   const frontier = new PruneFrontierTracker();
 
+  // Shared diagnostics — append-only metadata about prune attempts.
+  const diagnostics = new PruneDiagnosticsStore();
+
   // Pending batches — accumulated until the prune trigger fires
   const pendingBatches: CapturedBatch[] = [];
   let isFlushing = false;
 
   type FlushResult =
-    | { ok: true; reason: "flushed" | "skipped-oversized"; batchCount: number; toolCallCount: number; rawCharCount: number; summaryCharCount: number }
-    | { ok: false; reason: "empty" | "already-flushing" | "summarizer-failed" | "stale-context" | "failed" | "aborted"; error?: string };
+    | {
+        ok: true;
+        reason: "flushed" | "skipped-oversized";
+        batchCount: number;
+        toolCallCount: number;
+        rawCharCount: number;
+        summaryCharCount: number;
+      }
+    | {
+        ok: false;
+        reason:
+          | "empty"
+          | "already-flushing"
+          | "summarizer-failed"
+          | "stale-context"
+          | "failed"
+          | "aborted"
+          | "below-threshold";
+        error?: string;
+      };
+  type FlushFailureReason = Extract<FlushResult, { ok: false }>["reason"];
 
   type SessionAppender = {
     appendCustomEntry(customType: string, data?: unknown): string;
-    appendCustomMessageEntry(customType: string, content: string, display: boolean, details?: unknown): string;
+    appendCustomMessageEntry(
+      customType: string,
+      content: string,
+      display: boolean,
+      details?: unknown,
+    ): string;
   };
 
   const isStaleContextError = (err: unknown) =>
     err instanceof Error && err.message.includes("This extension ctx is stale");
 
-  const errorMessage = (err: unknown) => (err instanceof Error ? err.message : String(err));
+  const errorMessage = (err: unknown) =>
+    err instanceof Error ? err.message : String(err);
+
+  const estimateTexts = (texts: string[]) =>
+    texts.reduce(
+      (sum, text) => sum + estimateTokens(text, currentConfig.value).tokens,
+      0,
+    );
+
+  const baseDiagnostic = (
+    delivery: "runtime" | "session",
+    patch: Partial<PruneDiagnostic>,
+  ): PruneDiagnostic => ({
+    timestamp: Date.now(),
+    trigger: currentConfig.value.pruneOn,
+    pruneStrategy: currentConfig.value.pruneStrategy,
+    batchingMode: currentConfig.value.batchingMode,
+    protectedTailTokens: currentConfig.value.protectedTailTokens,
+    delivery,
+    attemptedBatchCount: 0,
+    eligibleToolCallCount: 0,
+    prunedToolCallCount: 0,
+    rawCharCount: 0,
+    estimatedRawTokens: 0,
+    replacementCharCount: 0,
+    estimatedReplacementTokens: 0,
+    ...patch,
+  });
+
+  const recordDiagnostic = (
+    delivery: "runtime" | "session",
+    patch: Partial<PruneDiagnostic>,
+    appendEntry?: (customType: string, data?: unknown) => unknown,
+  ) => {
+    const entry = baseDiagnostic(delivery, patch);
+    if (appendEntry) {
+      diagnostics.record(entry, appendEntry);
+    } else {
+      diagnostics.recordBestEffort(entry, pi);
+    }
+  };
+
+  const setPruneStatusWidgetBestEffort = (
+    ctx: any,
+    value?: SummarizerStats | string,
+  ) => {
+    try {
+      setPruneStatusWidget(ctx, currentConfig.value, value);
+    } catch {
+      // Status updates are advisory and must not change prune outcomes.
+    }
+  };
 
   const reloadConfig = async (ctx: any) => {
     configState.value = await loadConfigState(ctx.cwd ?? process.cwd());
@@ -92,9 +191,16 @@ export default function (pi: ExtensionAPI) {
   const updateConfig = async (patch: Partial<ContextPruneConfig>) => {
     const state = configState.value;
     if (state.projectPath) {
-      const project = normalizeConfigPatch({ ...(state.project ?? {}), ...patch });
+      const project = normalizeConfigPatch({
+        ...(state.project ?? {}),
+        ...patch,
+      });
       await saveProjectConfig(state.projectPath, project);
-      configState.value = { ...state, project, effective: mergeConfig(state.global, project) };
+      configState.value = {
+        ...state,
+        project,
+        effective: mergeConfig(state.global, project),
+      };
     } else {
       const global = normalizeConfig({ ...state.global, ...patch });
       await saveConfig(global);
@@ -103,7 +209,11 @@ export default function (pi: ExtensionAPI) {
     currentConfig.value = configState.value.effective;
   };
 
-  const safeNotify = (ctx: any, message: string, type: "info" | "warning" | "error" = "info") => {
+  const safeNotify = (
+    ctx: any,
+    message: string,
+    type: "info" | "warning" | "error" = "info",
+  ) => {
     try {
       ctx.ui.notify(message, type);
     } catch (err) {
@@ -116,15 +226,21 @@ export default function (pi: ExtensionAPI) {
     Array.isArray(message.content) &&
     message.content.some((block: any) => block?.type === "toolCall");
 
-  const isFinalAssistantMessage = (message: any) => message?.role === "assistant" && !assistantMessageHasToolCalls(message);
+  const isFinalAssistantMessage = (message: any) =>
+    message?.role === "assistant" && !assistantMessageHasToolCalls(message);
 
-  const trimBatchToPendingRange = (batch: CapturedBatch): CapturedBatch | null => {
+  const trimBatchToPendingRange = (
+    batch: CapturedBatch,
+  ): CapturedBatch | null => {
     const currentFrontier = frontier.get();
     let toolCalls = batch.toolCalls;
 
     // Preserved tool results remain in raw context. Do not summarize or index
     // them, otherwise the context filter would prune their original output.
-    toolCalls = toolCalls.filter((tc) => !shouldPreserveToolResult(tc, currentConfig.value.preserveToolResults));
+    toolCalls = toolCalls.filter(
+      (tc) =>
+        !shouldPreserveToolResult(tc, currentConfig.value.preserveToolResults),
+    );
 
     // The indexer tells us what was successfully summarized earlier.
     toolCalls = toolCalls.filter((tc) => !indexer.isSummarized(tc.toolCallId));
@@ -136,9 +252,12 @@ export default function (pi: ExtensionAPI) {
     // instead of dropping the whole batch on the floor.
     if (!currentFrontier) return { ...batch, toolCalls };
     if (batch.turnIndex < currentFrontier.lastAttemptedTurnIndex) return null;
-    if (batch.turnIndex > currentFrontier.lastAttemptedTurnIndex) return { ...batch, toolCalls };
+    if (batch.turnIndex > currentFrontier.lastAttemptedTurnIndex)
+      return { ...batch, toolCalls };
 
-    const originalIndex = toolCalls.findIndex((tc) => tc.toolCallId === currentFrontier.lastAttemptedToolCallId);
+    const originalIndex = toolCalls.findIndex(
+      (tc) => tc.toolCallId === currentFrontier.lastAttemptedToolCallId,
+    );
     if (originalIndex < 0) return { ...batch, toolCalls };
 
     const remaining = toolCalls.slice(originalIndex + 1);
@@ -150,7 +269,10 @@ export default function (pi: ExtensionAPI) {
     pendingBatches.unshift(...batches);
   };
 
-  const persistBatchIndex = (batch: CapturedBatch, appendEntry: (customType: string, data?: unknown) => void) => {
+  const persistBatchIndex = (
+    batch: CapturedBatch,
+    appendEntry: (customType: string, data?: unknown) => void,
+  ) => {
     const records = batch.toolCalls.map((tc) => ({
       toolCallId: tc.toolCallId,
       toolName: tc.toolName,
@@ -161,11 +283,10 @@ export default function (pi: ExtensionAPI) {
       timestamp: batch.timestamp,
     }));
 
+    appendEntry(CUSTOM_TYPE_INDEX, { toolCalls: records } as IndexEntryData);
     for (const record of records) {
       indexer.getIndex().set(record.toolCallId, record);
     }
-
-    appendEntry(CUSTOM_TYPE_INDEX, { toolCalls: records } as IndexEntryData);
   };
 
   // ── Helper: capture + trim + group pending batches (no LLM work) ──────────
@@ -175,7 +296,9 @@ export default function (pi: ExtensionAPI) {
     let batches: CapturedBatch[] = [];
     try {
       const branch = ctx.sessionManager.getBranch();
-      batches = captureUnindexedBatchesFromSession(branch, indexer, [CONTEXT_PRUNE_TOOL_NAME]);
+      batches = captureUnindexedBatchesFromSession(branch, indexer, [
+        CONTEXT_PRUNE_TOOL_NAME,
+      ]);
     } catch {
       batches = pendingBatches.slice();
     }
@@ -193,17 +316,52 @@ export default function (pi: ExtensionAPI) {
   // steer messages at protocol-safe boundaries. Session delivery is used only for
   // agent-message's final-message flush, where print-mode Pi may invalidate pi.*
   // while the summarizer LLM call is in flight.
-  const flushPending = async (ctx: any, options: FlushOptions = {}): Promise<FlushResult> => {
-    if (isFlushing) return { ok: false, reason: "already-flushing" };
+  const flushPending = async (
+    ctx: any,
+    options: FlushOptions = {},
+  ): Promise<FlushResult> => {
+    const delivery = options.delivery ?? "runtime";
+
+    if (isFlushing) {
+      recordDiagnostic(delivery, { skipReason: "already-flushing" });
+      return { ok: false, reason: "already-flushing" };
+    }
 
     // Use pre-captured batches if provided (avoids double-capture when the
     // caller previewed the queue before opening the progress overlay).
-    const batches: CapturedBatch[] = options.previewedBatches ?? capturePendingBatches(ctx);
+    const batches: CapturedBatch[] =
+      options.previewedBatches ?? capturePendingBatches(ctx);
 
-    if (batches.length === 0) return { ok: false, reason: "empty" };
+    if (batches.length === 0) {
+      recordDiagnostic(delivery, { skipReason: "empty" });
+      return { ok: false, reason: "empty" };
+    }
 
     // Bail out before we drain pendingBatches so they don't need restoring.
-    if (options.signal?.aborted) return { ok: false, reason: "aborted" };
+    if (options.signal?.aborted) {
+      const eligibleToolCallCount = batches.reduce(
+        (sum, batch) => sum + batch.toolCalls.length,
+        0,
+      );
+      recordDiagnostic(delivery, {
+        attemptedBatchCount: batches.length,
+        eligibleToolCallCount,
+        skipReason: "aborted",
+      });
+      return { ok: false, reason: "aborted" };
+    }
+
+    const guard = evaluatePruneGuard(batches, currentConfig.value);
+    if (!options.force && !guard.shouldPrune) {
+      recordDiagnostic(delivery, {
+        attemptedBatchCount: batches.length,
+        eligibleToolCallCount: guard.eligibleToolCallCount,
+        rawCharCount: guard.rawCharCount,
+        estimatedRawTokens: guard.estimatedRawTokens,
+        skipReason: guard.reason,
+      });
+      return { ok: false, reason: "below-threshold" };
+    }
 
     // Draining the queue since we've captured the state via session or slice.
     // We drain BEFORE the await so concurrent calls (though guarded by isFlushing)
@@ -212,7 +370,6 @@ export default function (pi: ExtensionAPI) {
 
     isFlushing = true;
 
-    const delivery = options.delivery ?? "runtime";
     let sessionManager: SessionAppender | undefined;
     if (delivery === "session") {
       try {
@@ -220,26 +377,48 @@ export default function (pi: ExtensionAPI) {
       } catch (err) {
         restoreBatches(batches);
         isFlushing = false;
-        return { ok: false, reason: isStaleContextError(err) ? "stale-context" : "failed", error: errorMessage(err) };
+        return {
+          ok: false,
+          reason: isStaleContextError(err) ? "stale-context" : "failed",
+          error: errorMessage(err),
+        };
       }
     }
 
-    const appendEntry = (customType: string, data?: unknown) => sessionManager!.appendCustomEntry(customType, data);
+    const appendEntry = (customType: string, data?: unknown) =>
+      sessionManager!.appendCustomEntry(customType, data);
     const appendSummaryMessage = (content: string, details: unknown) =>
-      sessionManager!.appendCustomMessageEntry(CUSTOM_TYPE_SUMMARY, content, true, details);
+      sessionManager!.appendCustomMessageEntry(
+        CUSTOM_TYPE_SUMMARY,
+        content,
+        true,
+        details,
+      );
 
     try {
-      const usePlaceholderStrategy = currentConfig.value.pruneStrategy === "placeholder";
-      setPruneStatusWidget(ctx, currentConfig.value, usePlaceholderStrategy ? "prune: indexing…" : "prune: summarizing…");
+      const usePlaceholderStrategy =
+        currentConfig.value.pruneStrategy === "placeholder";
+      setPruneStatusWidgetBestEffort(
+        ctx,
+        usePlaceholderStrategy ? "prune: indexing…" : "prune: summarizing…",
+      );
 
-      const reportBatchTextProgress = (index: number, total: number, batch: CapturedBatch, receivedChars: number) => {
+      const reportBatchTextProgress = (
+        index: number,
+        total: number,
+        batch: CapturedBatch,
+        receivedChars: number,
+      ) => {
         options.onBatchTextProgress?.(index, total, batch, receivedChars);
       };
 
       // Summarize batches. When onProgress is provided (i.e. /pruner now with the
       // multi-row overlay) we process sequentially so each row can be checked off
       // as its LLM call completes. Otherwise all batches run in parallel.
-      let results: ({ summaryText: string; usage?: import("./src/types.js").SummarizeResult["usage"] } | null)[];
+      let results: ({
+        summaryText: string;
+        usage?: import("./src/types.js").SummarizeResult["usage"];
+      } | null)[];
       if (usePlaceholderStrategy) {
         results = batches.map((batch, i) => {
           options.onProgress?.(i, batches.length, batch, "start");
@@ -253,11 +432,21 @@ export default function (pi: ExtensionAPI) {
           const r = await summarizeBatch(batches[i], currentConfig.value, ctx, {
             signal: options.signal,
             onTextProgress: (receivedChars) => {
-              reportBatchTextProgress(i, batches.length, batches[i], receivedChars);
+              reportBatchTextProgress(
+                i,
+                batches.length,
+                batches[i],
+                receivedChars,
+              );
             },
           });
           results.push(r);
-          options.onProgress(i, batches.length, batches[i], r ? "done" : "skipped");
+          options.onProgress(
+            i,
+            batches.length,
+            batches[i],
+            r ? "done" : "skipped",
+          );
         }
       } else {
         // Parallel — one LLM call per batch, all in flight simultaneously.
@@ -274,8 +463,14 @@ export default function (pi: ExtensionAPI) {
       let totalRawCharCount = 0;
       let totalSummaryCharCount = 0;
       let totalToolCallCount = 0;
+      let prunedRawCharCount = 0;
+      let prunedSummaryCharCount = 0;
+      let prunedToolCallCount = 0;
+      const prunedRawTexts: string[] = [];
+      const prunedSummaryTexts: string[] = [];
       const oversizedBatches: CapturedBatch[] = [];
       let firstFailureIndex = -1;
+      let firstFailureReason: FlushFailureReason = "summarizer-failed";
 
       for (let i = 0; i < batches.length; i++) {
         const result = results[i];
@@ -285,17 +480,16 @@ export default function (pi: ExtensionAPI) {
         }
 
         const batch = batches[i];
-        const batchRawCharCount = batch.toolCalls.reduce((s, tc) => s + tc.resultText.length, 0);
+        const batchRawCharCount = batch.toolCalls.reduce(
+          (s, tc) => s + tc.resultText.length,
+          0,
+        );
         const summaryRefs = indexer.allocateSummaryRefs(batch);
         const summaryText = usePlaceholderStrategy
           ? renderPlaceholderSummary(batch, summaryRefs, currentConfig.value)
           : result.summaryText + formatSummaryToolCallRefs(summaryRefs);
-        const shouldSkipOversized = !usePlaceholderStrategy && summaryText.length > batchRawCharCount;
-
-        if (result.usage) statsAccum.add(result.usage);
-        totalRawCharCount += batchRawCharCount;
-        totalSummaryCharCount += summaryText.length;
-        totalToolCallCount += batch.toolCalls.length;
+        const shouldSkipOversized =
+          !usePlaceholderStrategy && summaryText.length > batchRawCharCount;
 
         const batchDetails = makeSummaryDetails(batch, summaryRefs);
 
@@ -304,27 +498,44 @@ export default function (pi: ExtensionAPI) {
             // Write one summary message per turn and index its tool calls.
             if (delivery === "runtime") {
               pi.sendMessage(
-                { customType: CUSTOM_TYPE_SUMMARY, content: summaryText, display: true, details: batchDetails },
-                { deliverAs: "steer" }
+                {
+                  customType: CUSTOM_TYPE_SUMMARY,
+                  content: summaryText,
+                  display: true,
+                  details: batchDetails,
+                },
+                { deliverAs: "steer" },
               );
-              indexer.registerSummaryRefs(summaryRefs);
               indexer.addBatch(batch, pi);
+              indexer.registerSummaryRefs(summaryRefs);
             } else {
               appendSummaryMessage(summaryText, batchDetails);
-              indexer.registerSummaryRefs(summaryRefs);
               persistBatchIndex(batch, appendEntry);
+              indexer.registerSummaryRefs(summaryRefs);
             }
           } else {
             oversizedBatches.push(batch);
           }
         } catch (err) {
-          // Persistence error mid-loop: stop here, restore this and remaining batches.
+          // Persistence error mid-loop: stop here and restore this and remaining batches.
           if (isStaleContextError(err)) {
-            restoreBatches(batches.slice(i));
-            // Advance frontier to what we managed to persist before this point
+            firstFailureIndex = i;
+            firstFailureReason = "stale-context";
             break;
           }
           throw err;
+        }
+
+        if (result.usage) statsAccum.add(result.usage);
+        totalRawCharCount += batchRawCharCount;
+        totalSummaryCharCount += summaryText.length;
+        totalToolCallCount += batch.toolCalls.length;
+        if (!shouldSkipOversized) {
+          prunedRawCharCount += batchRawCharCount;
+          prunedSummaryCharCount += summaryText.length;
+          prunedToolCallCount += batch.toolCalls.length;
+          prunedRawTexts.push(...batch.toolCalls.map((tc) => tc.resultText));
+          prunedSummaryTexts.push(summaryText);
         }
 
         processedBatches.push(batch);
@@ -337,8 +548,20 @@ export default function (pi: ExtensionAPI) {
 
       if (processedBatches.length === 0) {
         // Nothing was persisted (all calls failed or first call failed)
-        setPruneStatusWidget(ctx, currentConfig.value, statsAccum.getStats());
-        return { ok: false, reason: "summarizer-failed" };
+        setPruneStatusWidgetBestEffort(ctx, statsAccum.getStats());
+        recordDiagnostic(
+          delivery,
+          {
+            attemptedBatchCount: batches.length,
+            eligibleToolCallCount: batches.reduce(
+              (sum, batch) => sum + batch.toolCalls.length,
+              0,
+            ),
+            skipReason: firstFailureReason,
+          },
+          delivery === "session" ? appendEntry : undefined,
+        );
+        return { ok: false, reason: firstFailureReason };
       }
 
       // Advance frontier to the last batch we actually processed.
@@ -359,32 +582,78 @@ export default function (pi: ExtensionAPI) {
 
       try {
         if (delivery === "runtime") {
+          pi.appendEntry(CUSTOM_TYPE_FRONTIER, frontierSnapshot);
           frontier.advance(frontierSnapshot);
-          frontier.persist(pi);
           statsAccum.persist(pi);
+          recordDiagnostic(delivery, {
+            attemptedBatchCount: processedBatches.length,
+            eligibleToolCallCount: totalToolCallCount,
+            prunedToolCallCount,
+            rawCharCount: prunedRawCharCount,
+            estimatedRawTokens: estimateTexts(prunedRawTexts),
+            replacementCharCount: prunedSummaryCharCount,
+            estimatedReplacementTokens: estimateTexts(prunedSummaryTexts),
+            skipReason: allOversized ? "summary-oversized" : undefined,
+            frontierToolCallId: lastTC.toolCallId,
+            frontierOutcome: frontierSnapshot.outcome,
+          });
         } else {
-          frontier.advance(frontierSnapshot);
           appendEntry(CUSTOM_TYPE_FRONTIER, frontierSnapshot);
+          frontier.advance(frontierSnapshot);
           try {
             appendEntry(CUSTOM_TYPE_STATS, statsAccum.getStats());
           } catch {
             // Ignore stats persistence failures; the prune result and frontier are the contract.
           }
+          recordDiagnostic(
+            delivery,
+            {
+              attemptedBatchCount: processedBatches.length,
+              eligibleToolCallCount: totalToolCallCount,
+              prunedToolCallCount,
+              rawCharCount: prunedRawCharCount,
+              estimatedRawTokens: estimateTexts(prunedRawTexts),
+              replacementCharCount: prunedSummaryCharCount,
+              estimatedReplacementTokens: estimateTexts(prunedSummaryTexts),
+              skipReason: allOversized ? "summary-oversized" : undefined,
+              frontierToolCallId: lastTC.toolCallId,
+              frontierOutcome: frontierSnapshot.outcome,
+            },
+            appendEntry,
+          );
         }
       } catch (err) {
-        return { ok: false, reason: isStaleContextError(err) ? "stale-context" : "failed", error: errorMessage(err) };
+        recordDiagnostic(delivery, {
+          attemptedBatchCount: processedBatches.length,
+          eligibleToolCallCount: totalToolCallCount,
+          prunedToolCallCount,
+          rawCharCount: prunedRawCharCount,
+          estimatedRawTokens: estimateTexts(prunedRawTexts),
+          replacementCharCount: prunedSummaryCharCount,
+          estimatedReplacementTokens: estimateTexts(prunedSummaryTexts),
+          skipReason: isStaleContextError(err) ? "stale-context" : "failed",
+        });
+        return {
+          ok: false,
+          reason: isStaleContextError(err) ? "stale-context" : "failed",
+          error: errorMessage(err),
+        };
       }
 
-      setPruneStatusWidget(ctx, currentConfig.value, statsAccum.getStats());
+      setPruneStatusWidgetBestEffort(ctx, statsAccum.getStats());
 
       // Notify about any oversized batches that were skipped
       for (const batch of oversizedBatches) {
-        const batchRaw = batch.toolCalls.reduce((s, tc) => s + tc.resultText.length, 0);
-        const batchSummaryLen = results[batches.indexOf(batch)]?.summaryText.length ?? 0;
+        const batchRaw = batch.toolCalls.reduce(
+          (s, tc) => s + tc.resultText.length,
+          0,
+        );
+        const batchSummaryLen =
+          results[batches.indexOf(batch)]?.summaryText.length ?? 0;
         safeNotify(
           ctx,
           `pruner: skipped pruning turn ${batch.turnIndex} (${batch.toolCalls.length} tool call${batch.toolCalls.length === 1 ? "" : "s"}) — summary was ${batchSummaryLen} chars vs ${batchRaw} raw chars; frontier advanced past this range`,
-          "warning"
+          "warning",
         );
       }
 
@@ -401,13 +670,41 @@ export default function (pi: ExtensionAPI) {
       // When the abort signal fired, summarizeBatch rethrows rather than
       // swallowing the error.  Don't show a UI error — the user intended this.
       if (options.signal?.aborted) {
-        setPruneStatusWidget(ctx, currentConfig.value, statsAccum.getStats());
+        setPruneStatusWidgetBestEffort(ctx, statsAccum.getStats());
+        recordDiagnostic(delivery, {
+          attemptedBatchCount: batches.length,
+          eligibleToolCallCount: batches.reduce(
+            (sum, batch) => sum + batch.toolCalls.length,
+            0,
+          ),
+          skipReason: "aborted",
+        });
         return { ok: false, reason: "aborted" };
       }
       if (isStaleContextError(err)) {
+        recordDiagnostic(delivery, {
+          attemptedBatchCount: batches.length,
+          eligibleToolCallCount: batches.reduce(
+            (sum, batch) => sum + batch.toolCalls.length,
+            0,
+          ),
+          skipReason: "stale-context",
+        });
         return { ok: false, reason: "stale-context", error: errorMessage(err) };
       }
-      safeNotify(ctx, `pruner: summarization failed: ${errorMessage(err)}`, "error");
+      safeNotify(
+        ctx,
+        `pruner: summarization failed: ${errorMessage(err)}`,
+        "error",
+      );
+      recordDiagnostic(delivery, {
+        attemptedBatchCount: batches.length,
+        eligibleToolCallCount: batches.reduce(
+          (sum, batch) => sum + batch.toolCalls.length,
+          0,
+        ),
+        skipReason: "failed",
+      });
       return { ok: false, reason: "failed", error: errorMessage(err) };
     } finally {
       isFlushing = false;
@@ -418,7 +715,9 @@ export default function (pi: ExtensionAPI) {
   // Uses `pi` (ExtensionRuntime) because getActiveTools/setActiveTools are
   // runtime methods, NOT part of ExtensionContext/ExtensionCommandContext.
   const syncToolActivation = () => {
-    const shouldActivate = currentConfig.value.enabled && currentConfig.value.pruneOn === "agentic-auto";
+    const shouldActivate =
+      currentConfig.value.enabled &&
+      currentConfig.value.pruneOn === "agentic-auto";
     const activeTools = pi.getActiveTools();
     if (shouldActivate) {
       if (!activeTools.includes(CONTEXT_PRUNE_TOOL_NAME)) {
@@ -426,7 +725,9 @@ export default function (pi: ExtensionAPI) {
       }
     } else {
       if (activeTools.includes(CONTEXT_PRUNE_TOOL_NAME)) {
-        pi.setActiveTools(activeTools.filter((t: string) => t !== CONTEXT_PRUNE_TOOL_NAME));
+        pi.setActiveTools(
+          activeTools.filter((t: string) => t !== CONTEXT_PRUNE_TOOL_NAME),
+        );
       }
     }
   };
@@ -445,6 +746,9 @@ export default function (pi: ExtensionAPI) {
     // Rebuild prune frontier from persisted session entries
     frontier.reconstructFromSession(ctx);
 
+    // Rebuild append-only prune diagnostics from persisted session entries
+    diagnostics.reconstructFromSession(ctx);
+
     // Clear any batches queued before the session reload
     pendingBatches.length = 0;
 
@@ -456,7 +760,7 @@ export default function (pi: ExtensionAPI) {
 
     ctx.ui.notify(
       `pruner loaded — pruning ${currentConfig.value.enabled ? "ON" : "OFF"} | model: ${currentConfig.value.summarizerModel}`,
-      "info"
+      "info",
     );
   });
 
@@ -466,6 +770,7 @@ export default function (pi: ExtensionAPI) {
     indexer.reconstructFromSession(ctx);
     statsAccum.reconstructFromSession(ctx);
     frontier.reconstructFromSession(ctx);
+    diagnostics.reconstructFromSession(ctx);
     // Pending batches belong to the old branch — discard them
     pendingBatches.length = 0;
     setPruneStatusWidget(ctx, currentConfig.value, statsAccum.getStats());
@@ -489,14 +794,16 @@ export default function (pi: ExtensionAPI) {
       event.message,
       event.toolResults,
       event.turnIndex,
-      Date.now()
+      Date.now(),
     );
     const batch = trimBatchToPendingRange({
       ...capturedBatch,
       // Do not summarize the pruner's own housekeeping tool result. Otherwise
       // agentic-auto mode can queue the context_prune result and try to flush it
       // during agent_end, when Pi may already have invalidated the extension ctx.
-      toolCalls: capturedBatch.toolCalls.filter((tc) => tc.toolName !== CONTEXT_PRUNE_TOOL_NAME),
+      toolCalls: capturedBatch.toolCalls.filter(
+        (tc) => tc.toolName !== CONTEXT_PRUNE_TOOL_NAME,
+      ),
     });
     if (!batch) return;
 
@@ -527,7 +834,7 @@ export default function (pi: ExtensionAPI) {
         safeNotify(
           ctx,
           `pruner: ${n} turn${n === 1 ? "" : "s"} queued — will summarize on ${trigger}`,
-          "info"
+          "info",
         );
       }
     }
@@ -559,7 +866,11 @@ export default function (pi: ExtensionAPI) {
   pi.on("agent_end", async (_event, ctx) => {
     if (!currentConfig.value.enabled) return;
     if (pendingBatches.length === 0) return;
-    setPruneStatusWidget(ctx, currentConfig.value, `prune: ${pendingBatches.length} pending`);
+    setPruneStatusWidget(
+      ctx,
+      currentConfig.value,
+      `prune: ${pendingBatches.length} pending`,
+    );
   });
 
   // ── context: prune summarized tool results from next LLM call ─────────────
@@ -569,7 +880,10 @@ export default function (pi: ExtensionAPI) {
     const indexEmpty = indexer.getIndex().size === 0;
     let messages = event.messages;
     let changed = false;
-    const { protectedToolCallIds } = computeProtectedTail(messages, currentConfig.value);
+    const { protectedToolCallIds } = computeProtectedTail(
+      messages,
+      currentConfig.value,
+    );
 
     if (!indexEmpty) {
       const pruned = pruneMessages(messages, indexer, protectedToolCallIds);
@@ -587,9 +901,18 @@ export default function (pi: ExtensionAPI) {
       currentConfig.value.pruneOn === "agentic-auto" &&
       currentConfig.value.remindUnprunedCount
     ) {
-      const count = countUnprunedToolCalls(messages, indexer, protectedToolCallIds, currentConfig.value.preserveToolResults);
+      const count = countUnprunedToolCalls(
+        messages,
+        indexer,
+        protectedToolCallIds,
+        currentConfig.value.preserveToolResults,
+      );
       if (count > 0) {
-        const annotated = annotateWithUnprunedCount(messages, count, currentConfig.value.protectedTailTokens > 0);
+        const annotated = annotateWithUnprunedCount(
+          messages,
+          count,
+          currentConfig.value.protectedTailTokens > 0,
+        );
         if (annotated !== messages) {
           messages = annotated;
           changed = true;
@@ -603,7 +926,11 @@ export default function (pi: ExtensionAPI) {
 
   // ── before_agent_start: inject system prompt for agentic-auto mode ───────────
   pi.on("before_agent_start", async (event, _ctx) => {
-    if (!currentConfig.value.enabled || currentConfig.value.pruneOn !== "agentic-auto") return undefined;
+    if (
+      !currentConfig.value.enabled ||
+      currentConfig.value.pruneOn !== "agentic-auto"
+    )
+      return undefined;
     // Append agentic-auto instructions to the system prompt
     const appended = AGENTIC_AUTO_SYSTEM_PROMPT;
     const original = event.systemPrompt ?? "";
@@ -615,7 +942,9 @@ export default function (pi: ExtensionAPI) {
   registerQueryTool(pi, indexer);
 
   // ── Register context_prune tool (always registered, activated only in agentic-auto mode) ──
-  registerContextPruneTool(pi, (ctx, options) => flushPending(ctx, { delivery: "runtime", ...options }));
+  registerContextPruneTool(pi, (ctx, options) =>
+    flushPending(ctx, { delivery: "runtime", ...options }),
+  );
 
   // ── Register /pruner command + summary message renderer ────────────
   registerCommands(
@@ -625,6 +954,7 @@ export default function (pi: ExtensionAPI) {
     capturePendingBatches,
     syncToolActivation,
     () => statsAccum.getStats(),
+    () => diagnostics.getEntries(),
     indexer,
     () => configState.value,
     updateConfig,

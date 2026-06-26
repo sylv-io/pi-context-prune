@@ -130,10 +130,12 @@ export class ToolCallIndexer {
         turnIndex: batch.turnIndex,
         timestamp: batch.timestamp,
       };
-      this.index.set(record.toolCallId, record);
       records.push(record);
     }
 
     pi.appendEntry(CUSTOM_TYPE_INDEX, { toolCalls: records } as IndexEntryData);
+    for (const record of records) {
+      this.index.set(record.toolCallId, record);
+    }
   }
 }

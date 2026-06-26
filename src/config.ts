@@ -118,6 +118,22 @@ export function normalizeConfigPatch(existing: unknown): Partial<ContextPruneCon
   ) {
     patch.charsPerToken = input.charsPerToken;
   }
+  if (
+    "minPruneRawTokens" in input &&
+    typeof input.minPruneRawTokens === "number" &&
+    Number.isFinite(input.minPruneRawTokens) &&
+    input.minPruneRawTokens >= 0
+  ) {
+    patch.minPruneRawTokens = Math.floor(input.minPruneRawTokens);
+  }
+  if (
+    "minPruneToolCalls" in input &&
+    typeof input.minPruneToolCalls === "number" &&
+    Number.isFinite(input.minPruneToolCalls) &&
+    input.minPruneToolCalls >= 0
+  ) {
+    patch.minPruneToolCalls = Math.floor(input.minPruneToolCalls);
+  }
   if ("preserveToolResults" in input && Array.isArray(input.preserveToolResults)) {
     patch.preserveToolResults = input.preserveToolResults.filter(isPreserveToolResultRule);
   }
@@ -156,6 +172,8 @@ export function normalizeConfig(existing: unknown): ContextPruneConfig {
       ? merged.tokenizerEncoding
       : DEFAULT_CONFIG.tokenizerEncoding,
     charsPerToken: normalizePositiveNumber(merged.charsPerToken, DEFAULT_CONFIG.charsPerToken),
+    minPruneRawTokens: normalizeNonNegativeNumber(merged.minPruneRawTokens, DEFAULT_CONFIG.minPruneRawTokens),
+    minPruneToolCalls: normalizeNonNegativeNumber(merged.minPruneToolCalls, DEFAULT_CONFIG.minPruneToolCalls),
     preserveToolResults: normalizePreserveToolResults(merged.preserveToolResults),
   };
 }

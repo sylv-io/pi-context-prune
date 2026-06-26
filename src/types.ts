@@ -53,6 +53,9 @@ export const CUSTOM_TYPE_INDEX = "context-prune-index";
 /** customType for stats persistence entries (NOT in LLM context) */
 export const CUSTOM_TYPE_STATS = "context-prune-stats";
 
+/** customType for prune diagnostics entries (NOT in LLM context) */
+export const CUSTOM_TYPE_DIAGNOSTIC = "context-prune-diagnostic";
+
 /** customType for prune-frontier persistence entries (NOT in LLM context) */
 export const CUSTOM_TYPE_FRONTIER = "context-prune-frontier";
 
@@ -218,6 +221,10 @@ export interface ContextPruneConfig {
   tokenizerEncoding: TokenizerEncoding;
   /** Character divisor used when tokenEstimator is chars or tiktoken fallback is needed. */
   charsPerToken: number;
+  /** Minimum estimated raw tokens required before an automatic prune attempt runs. */
+  minPruneRawTokens: number;
+  /** Minimum eligible tool calls required before an automatic prune attempt runs. */
+  minPruneToolCalls: number;
 }
 
 export const DEFAULT_CONFIG: ContextPruneConfig = {
@@ -234,6 +241,8 @@ export const DEFAULT_CONFIG: ContextPruneConfig = {
   tokenEstimator: "auto",
   tokenizerEncoding: "o200k_base",
   charsPerToken: 4,
+  minPruneRawTokens: 4000,
+  minPruneToolCalls: 8,
 };
 
 // ── Captured batch ─────────────────────────────────────────────────────────
@@ -333,6 +342,26 @@ export interface SummarizerStats {
   callCount: number;
 }
 
+/** Append-only metadata for one prune attempt; not shown to the model. */
+export interface PruneDiagnostic {
+  timestamp: number;
+  trigger: PruneOn;
+  pruneStrategy: PruneStrategy;
+  batchingMode: BatchingMode;
+  protectedTailTokens: number;
+  delivery: "runtime" | "session";
+  attemptedBatchCount: number;
+  eligibleToolCallCount: number;
+  prunedToolCallCount: number;
+  rawCharCount: number;
+  estimatedRawTokens: number;
+  replacementCharCount: number;
+  estimatedReplacementTokens: number;
+  skipReason?: string;
+  frontierToolCallId?: string;
+  frontierOutcome?: PruneFrontierOutcome;
+}
+
 /** Outcome of the most recent completed prune attempt. */
 export type PruneFrontierOutcome = "summarized" | "skipped-oversized";
 
@@ -405,6 +434,8 @@ export interface FlushOptions {
    * opening the progress overlay.
    */
   previewedBatches?: CapturedBatch[];
+  /** Bypass the minimum prune guard. Used by `/pruner now --force`. */
+  force?: boolean;
   /**
    * Abort signal — when fired the in-flight summarization is cancelled and
    * `flushPending` returns `{ ok: false, reason: "aborted" }` without advancing
