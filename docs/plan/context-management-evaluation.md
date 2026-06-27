@@ -45,6 +45,25 @@ Good candidates include:
 Skip tiny sessions that only produce a few small tool results unless the point
 is to validate below-threshold skip behavior.
 
+## Minimal assisted workflow
+
+For normal evaluation, the user should only provide a session ID, a
+`session.jsonl` path, or say that the latest session should be evaluated. The
+assistant collects the session file, the current configuration, matching cache
+CSVs, and commit IDs. Then the assistant writes the sample notes and reports the
+results.
+
+Useful prompts:
+
+```text
+Evaluate pruning for the latest session.
+Evaluate pruning for session <session-id>.
+Evaluate pruning for /path/to/session.jsonl.
+```
+
+Use the manual commands below only when working without an assistant or when
+checking the exact contents collected.
+
 ## Before starting the session
 
 Record the active configuration and code version:
