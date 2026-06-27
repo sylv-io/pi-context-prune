@@ -7,6 +7,7 @@
 - Source session: `019f03ac-1d93-7308-beae-1bc80133ad5f`
 - Cache export: `/home/sylv/.pi/agent/2026-06-26T11-23-59-251Z_019f03ac-1d93-7308-beae-1bc80133ad5f.csv`
 - State: first pass implemented and committed. Remaining work is observation.
+- Evaluation runbook: `docs/plan/context-management-evaluation.md`
 
 ## Goal
 
@@ -264,8 +265,9 @@ metric because suffix size changes the denominator.
 
 - [x] Record `protectedTailTokens` in diagnostics.
 - [x] Set the global protected tail to `16000` for this environment.
-- [x] Use a reloaded session for initial observation.
-- [x] Compare prompt size and obvious relevance behavior.
+- [x] Use a reloaded session for an initial smoke check.
+- [ ] Compare prompt size and obvious relevance behavior across several real
+      sessions.
 - [ ] Revert to `24000` if relevance suffers.
 
 ### Protected-tail acceptance criteria
@@ -352,8 +354,8 @@ narrower preserve rules before adding another trigger.
 ### Trigger baseline TODOs
 
 - [x] Keep the current trigger mode unchanged.
-- [x] Use diagnostics to see whether long autonomous runs still exceed the
-      desired prompt-size budget.
+- [ ] Use diagnostics from several real sessions to see whether long autonomous
+      runs still exceed the desired prompt-size budget.
 - [ ] Revisit threshold-based early pruning only if large peaks remain.
 
 ### Trigger acceptance criteria
@@ -380,7 +382,7 @@ Defer these ideas:
 
 ### Summary-architecture baseline TODOs
 
-- [ ] Do not implement stable summary placement in the first pass.
+- [x] Do not implement stable summary placement in the first pass.
 - [ ] Track whether cache misses remain severe after Workstreams 1 through 5.
 - [ ] Reopen this workstream only with fresh diagnostics and a clear problem
       statement.
@@ -390,14 +392,42 @@ Defer these ideas:
 - The first implementation pass remains small and reversible.
 - Future architecture work has concrete context and cache evidence.
 
-## Suggested implementation order
+## Future goal tracking
+
+Track future work from real-session samples, not from speculation.
+
+### Observe first
+
+- Collect several real sessions using
+  `docs/plan/context-management-evaluation.md`.
+- Compare prune attempts, skipped attempts, raw size, replacement size, prompt
+  size, recoveries, and relevance notes.
+- Keep cache-hit percentage as supporting evidence only. It is not enough to
+  prove pruning causality by itself.
+
+### Candidate follow-ups
+
+- Revert `protectedTailTokens` to `24000` if real sessions show relevance
+  regressions after the `16000` change.
+- Tune `minPruneRawTokens` or `minPruneToolCalls` if samples show repeated tiny
+  prunes or delayed useful pruning.
+- Add threshold-based early pruning only if `agent-message` still allows large
+  prompt peaks during long autonomous runs.
+- Improve `context_tree_query` recovery if narrowed preserve rules make large
+  documentation recovery unreliable.
+- Revisit stable summary placement or retrieval-only pruning only if cache churn
+  remains a clear problem after simpler tuning.
+
+## First-pass implementation completed
 
 1. Add minimal diagnostics.
 2. Add the simple minimum prune guard.
 3. Narrow read-tool preserve rules in global config.
 4. Set `protectedTailTokens: 16000` in global config.
-5. Observe real usage.
-6. Revisit analyzer, adaptive trigger, or recovery improvements only if needed.
+5. Validate recovery, diagnostics, and guard behavior with a smoke session.
+
+The next phase is to observe real usage with the evaluation runbook before
+revisiting analyzer, adaptive trigger, or recovery improvements.
 
 ## Validation checklist
 
@@ -413,9 +443,9 @@ For each implemented workstream:
 
 ## Approval gate
 
-This plan records decisions and TODOs only. Implementation requires explicit
-approval for the selected workstream or group of workstreams.
+The first implementation pass was approved, implemented, reviewed, and
+committed. Further behavior changes still need explicit approval for the
+selected workstream or group of workstreams.
 
-Workstreams 3 and 4 change model-facing context behavior through configuration.
-They should receive separate approval or be included explicitly in a named
-approved batch.
+Configuration changes that alter model-facing context behavior should be called
+out separately before implementation.
