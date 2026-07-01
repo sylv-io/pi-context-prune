@@ -712,7 +712,7 @@ export function registerCommands(
               + `\n  status:   ${cfg.showPruneStatusLine ? "on" : "off"}`
               + `\n  remind:   ${cfg.remindUnprunedCount ? "on" : "off"} (agentic-auto only)`
               + `\n  protected context tail: ${formatTokens(cfg.protectedTailTokens)} estimated tokens`
-              + `\n  minimum prune: ${formatTokens(cfg.minPruneRawTokens)} raw tokens or ${cfg.minPruneToolCalls} tool calls`
+              + `\n  minimum prune: ${formatTokens(cfg.minPruneRawTokens)} pruneable raw tokens`
               + `\n  token estimator: ${tokenEstimatorLabel(cfg.tokenEstimator)} (${cfg.tokenEstimator})`
               + `\n  tokenizer encoding: ${tokenizerEncodingLabel(cfg.tokenizerEncoding)}`
               + `\n  chars per token: ${cfg.charsPerToken}${preserveLine}${statsLine}`,

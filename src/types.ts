@@ -221,9 +221,9 @@ export interface ContextPruneConfig {
   tokenizerEncoding: TokenizerEncoding;
   /** Character divisor used when tokenEstimator is chars or tiktoken fallback is needed. */
   charsPerToken: number;
-  /** Minimum estimated raw tokens required before an automatic prune attempt runs. */
+  /** Minimum estimated pruneable raw tokens required before an automatic prune attempt runs. */
   minPruneRawTokens: number;
-  /** Minimum eligible tool calls required before an automatic prune attempt runs. */
+  /** Deprecated compatibility field. Tool count alone no longer triggers pruning. */
   minPruneToolCalls: number;
 }
 
@@ -241,7 +241,7 @@ export const DEFAULT_CONFIG: ContextPruneConfig = {
   tokenEstimator: "auto",
   tokenizerEncoding: "o200k_base",
   charsPerToken: 4,
-  minPruneRawTokens: 4000,
+  minPruneRawTokens: 8000,
   minPruneToolCalls: 8,
 };
 

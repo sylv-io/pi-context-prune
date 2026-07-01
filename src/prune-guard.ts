@@ -1,5 +1,10 @@
-import type { CapturedBatch, ContextPruneConfig } from "./types.js";
+import type {
+	CapturedBatch,
+	ContextPruneConfig,
+	PreserveToolResultRule,
+} from "./types.js";
 import { estimateTokens } from "./token-estimator.js";
+import { shouldPreserveToolResult } from "./preserve-tool-results.js";
 
 export interface PruneGuardEvaluation {
 	shouldPrune: boolean;
@@ -7,6 +12,38 @@ export interface PruneGuardEvaluation {
 	estimatedRawTokens: number;
 	eligibleToolCallCount: number;
 	reason?: "below-threshold";
+}
+
+export interface PruneableBatchFilterOptions {
+	protectedToolCallIds?: Set<string>;
+	preserveToolResults?: PreserveToolResultRule[];
+	isSummarized?: (toolCallId: string) => boolean;
+	excludeToolNames?: string[];
+}
+
+/**
+ * Keeps only tool results that can actually be removed from future context.
+ * Non-pruneable results must not push the automatic threshold over the line.
+ */
+export function filterPruneableBatches(
+	batches: CapturedBatch[],
+	options: PruneableBatchFilterOptions = {},
+): CapturedBatch[] {
+	const excludeToolNames = new Set(options.excludeToolNames ?? []);
+	return batches
+		.map((batch) => {
+			const toolCalls = batch.toolCalls.filter((tc) => {
+				if (excludeToolNames.has(tc.toolName)) return false;
+				if (options.protectedToolCallIds?.has(tc.toolCallId)) return false;
+				if (options.isSummarized?.(tc.toolCallId)) return false;
+				return !shouldPreserveToolResult(
+					tc,
+					options.preserveToolResults ?? [],
+				);
+			});
+			return toolCalls.length > 0 ? { ...batch, toolCalls } : null;
+		})
+		.filter((batch): batch is CapturedBatch => batch !== null);
 }
 
 /**
@@ -20,8 +57,10 @@ export interface PruneGuardEvaluation {
 export function evaluatePruneGuard(
 	batches: CapturedBatch[],
 	config: ContextPruneConfig,
+	options: PruneableBatchFilterOptions = {},
 ): PruneGuardEvaluation {
-	const resultTexts = batches.flatMap((batch) =>
+	const pruneableBatches = filterPruneableBatches(batches, options);
+	const resultTexts = pruneableBatches.flatMap((batch) =>
 		batch.toolCalls.map((tc) => tc.resultText),
 	);
 	const rawCharCount = resultTexts.reduce((sum, text) => sum + text.length, 0);
@@ -29,14 +68,12 @@ export function evaluatePruneGuard(
 		(sum, text) => sum + estimateTokens(text, config).tokens,
 		0,
 	);
-	const eligibleToolCallCount = batches.reduce(
+	const eligibleToolCallCount = pruneableBatches.reduce(
 		(sum, batch) => sum + batch.toolCalls.length,
 		0,
 	);
 
-	const shouldPrune =
-		estimatedRawTokens >= config.minPruneRawTokens ||
-		eligibleToolCallCount >= config.minPruneToolCalls;
+	const shouldPrune = estimatedRawTokens >= config.minPruneRawTokens;
 
 	return {
 		shouldPrune,

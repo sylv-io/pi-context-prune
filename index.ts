@@ -63,11 +63,13 @@ import {
 import { StatsAccumulator } from "./src/stats.js";
 import { registerContextPruneTool } from "./src/context-prune-tool.js";
 import { PruneFrontierTracker } from "./src/frontier.js";
-import { shouldPreserveToolResult } from "./src/preserve-tool-results.js";
 import { computeProtectedTail } from "./src/context-tail.js";
 import { estimateTokens } from "./src/token-estimator.js";
 import { PruneDiagnosticsStore } from "./src/diagnostics.js";
-import { evaluatePruneGuard } from "./src/prune-guard.js";
+import {
+  evaluatePruneGuard,
+  filterPruneableBatches,
+} from "./src/prune-guard.js";
 
 export default function (pi: ExtensionAPI) {
   // Shared mutable config reference — updated by /pruner commands
@@ -231,20 +233,16 @@ export default function (pi: ExtensionAPI) {
 
   const trimBatchToPendingRange = (
     batch: CapturedBatch,
+    protectedToolCallIds = new Set<string>(),
   ): CapturedBatch | null => {
     const currentFrontier = frontier.get();
-    let toolCalls = batch.toolCalls;
-
-    // Preserved tool results remain in raw context. Do not summarize or index
-    // them, otherwise the context filter would prune their original output.
-    toolCalls = toolCalls.filter(
-      (tc) =>
-        !shouldPreserveToolResult(tc, currentConfig.value.preserveToolResults),
-    );
-
-    // The indexer tells us what was successfully summarized earlier.
-    toolCalls = toolCalls.filter((tc) => !indexer.isSummarized(tc.toolCallId));
-    if (toolCalls.length === 0) return null;
+    const pruneableBatch = filterPruneableBatches([batch], {
+      protectedToolCallIds,
+      preserveToolResults: currentConfig.value.preserveToolResults,
+      isSummarized: (toolCallId) => indexer.isSummarized(toolCallId),
+    })[0];
+    if (!pruneableBatch) return null;
+    const toolCalls = pruneableBatch.toolCalls;
 
     // The frontier tells us the last attempted boundary even when the attempt did
     // not persist index entries (e.g. skipped-oversized). When the LLM prunes in
@@ -294,16 +292,25 @@ export default function (pi: ExtensionAPI) {
   // queue before opening the multi-row progress overlay.
   const capturePendingBatches = (ctx: any): CapturedBatch[] => {
     let batches: CapturedBatch[] = [];
+    let protectedToolCallIds = new Set<string>();
     try {
       const branch = ctx.sessionManager.getBranch();
+      const messages = branch
+        .filter((entry: any) => entry.type === "message")
+        .map((entry: any) => entry.message);
+      protectedToolCallIds = computeProtectedTail(
+        messages,
+        currentConfig.value,
+      ).protectedToolCallIds;
       batches = captureUnindexedBatchesFromSession(branch, indexer, [
         CONTEXT_PRUNE_TOOL_NAME,
       ]);
     } catch {
+      if (currentConfig.value.protectedTailTokens > 0) return [];
       batches = pendingBatches.slice();
     }
     batches = batches
-      .map((batch) => trimBatchToPendingRange(batch))
+      .map((batch) => trimBatchToPendingRange(batch, protectedToolCallIds))
       .filter((batch): batch is CapturedBatch => batch !== null);
     return groupBatchesByMode(batches, currentConfig.value.batchingMode);
   };
