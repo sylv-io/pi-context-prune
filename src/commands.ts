@@ -700,6 +700,9 @@ export function registerCommands(
           const statsLine = s.callCount > 0
             ? `\n  --- summarizer ---\n  calls:       ${s.callCount}\n  input:       ${formatTokens(s.totalInputTokens)} tokens\n  output:      ${formatTokens(s.totalOutputTokens)} tokens\n  cost:        ${formatCost(s.totalCost)}`
             : "\n  (no summarizer calls yet)";
+          const minimumPruneLine = cfg.minPruneToolCalls > 0
+            ? `${formatTokens(cfg.minPruneRawTokens)} pruneable raw tokens or ${cfg.minPruneToolCalls} tool calls`
+            : `${formatTokens(cfg.minPruneRawTokens)} pruneable raw tokens; tool-call threshold disabled`;
           ctx.ui.notify(
             `pruner status:\n  global:   ${SETTINGS_PATH}${projectLine}`
               + `\n  merge:    project overrides global per field`
@@ -712,7 +715,7 @@ export function registerCommands(
               + `\n  status:   ${cfg.showPruneStatusLine ? "on" : "off"}`
               + `\n  remind:   ${cfg.remindUnprunedCount ? "on" : "off"} (agentic-auto only)`
               + `\n  protected context tail: ${formatTokens(cfg.protectedTailTokens)} estimated tokens`
-              + `\n  minimum prune: ${formatTokens(cfg.minPruneRawTokens)} pruneable raw tokens`
+              + `\n  minimum prune: ${minimumPruneLine}`
               + `\n  token estimator: ${tokenEstimatorLabel(cfg.tokenEstimator)} (${cfg.tokenEstimator})`
               + `\n  tokenizer encoding: ${tokenizerEncodingLabel(cfg.tokenizerEncoding)}`
               + `\n  chars per token: ${cfg.charsPerToken}${preserveLine}${statsLine}`,

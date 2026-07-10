@@ -193,6 +193,8 @@ Global config is stored in `~/.pi/agent/context-prune/settings.json`:
   "remindUnprunedCount": true,
   "preserveToolResults": [],
   "protectedTailTokens": 0,
+  "minPruneRawTokens": 8000,
+  "minPruneToolCalls": 8,
   "charsPerToken": 4
 }
 ```
@@ -210,6 +212,8 @@ Global config is stored in `~/.pi/agent/context-prune/settings.json`:
 | `tokenEstimator` | `"auto"`, `"tiktoken"`, `"chars"` | `"auto"` |
 | `tokenizerEncoding` | `"o200k_base"`, `"cl100k_base"` | `"o200k_base"` |
 | `charsPerToken` | Positive number | `4` |
+| `minPruneRawTokens` | Non-negative estimated token count | `8000` |
+| `minPruneToolCalls` | Positive eligible tool-call count, or `0` to disable | `8` |
 
 - `showPruneStatusLine: true` keeps the prune footer widget and the automatic queued-turn notice visible. Turn it off if you want pruning to stay active without the extra status noise.
 - `remindUnprunedCount: true` appends a small ephemeral `<pruner-note>` to the last tool result before each LLM call to remind the model of the number of unpruned tool calls in context. This only has an effect when `pruneOn` is set to `"agentic-auto"`.
@@ -222,6 +226,7 @@ Global config is stored in `~/.pi/agent/context-prune/settings.json`:
 - `protectedTailTokens` keeps the newest estimated tokens of the final model-facing context raw. A value of `0` disables this guard.
 - `tokenEstimator: "auto"` uses `js-tiktoken` with `tokenizerEncoding` when available, then falls back to a character estimate. Use `"chars"` for deterministic character-based estimates.
 - `charsPerToken` controls the character estimator used by `tokenEstimator: "chars"` and the tiktoken fallback.
+- `minPruneRawTokens` and `minPruneToolCalls` are alternative automatic pruning thresholds. Pruning starts when either threshold is reached after protected and preserved results are excluded. Set `minPruneToolCalls` to `0` to disable the call-count threshold.
 - Default `tokenEstimator` and `tokenizerEncoding` values are optional and omitted when settings are saved.
 - Project config can be stored in `<project>/.pi/context-prune/settings.json`.
   It is partial, and any key present there overrides the global value for that

@@ -36,10 +36,7 @@ export function filterPruneableBatches(
 				if (excludeToolNames.has(tc.toolName)) return false;
 				if (options.protectedToolCallIds?.has(tc.toolCallId)) return false;
 				if (options.isSummarized?.(tc.toolCallId)) return false;
-				return !shouldPreserveToolResult(
-					tc,
-					options.preserveToolResults ?? [],
-				);
+				return !shouldPreserveToolResult(tc, options.preserveToolResults ?? []);
 			});
 			return toolCalls.length > 0 ? { ...batch, toolCalls } : null;
 		})
@@ -73,7 +70,11 @@ export function evaluatePruneGuard(
 		0,
 	);
 
-	const shouldPrune = estimatedRawTokens >= config.minPruneRawTokens;
+	const toolCallThresholdReached =
+		config.minPruneToolCalls > 0 &&
+		eligibleToolCallCount >= config.minPruneToolCalls;
+	const shouldPrune =
+		estimatedRawTokens >= config.minPruneRawTokens || toolCallThresholdReached;
 
 	return {
 		shouldPrune,

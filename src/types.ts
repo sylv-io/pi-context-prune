@@ -223,7 +223,7 @@ export interface ContextPruneConfig {
   charsPerToken: number;
   /** Minimum estimated pruneable raw tokens required before an automatic prune attempt runs. */
   minPruneRawTokens: number;
-  /** Deprecated compatibility field. Tool count alone no longer triggers pruning. */
+  /** Minimum pruneable tool-call count for automatic pruning; 0 disables this threshold. */
   minPruneToolCalls: number;
 }
 
