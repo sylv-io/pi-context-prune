@@ -235,8 +235,10 @@ export async function loadProjectConfig(
   }
 }
 
-export async function loadConfigState(cwd: string): Promise<ConfigState> {
+export async function loadConfigState(cwd: string, projectTrusted: boolean): Promise<ConfigState> {
   const global = await loadConfig();
+  if (!projectTrusted) return { global, effective: mergeConfig(global) };
+
   const project = await loadProjectConfig(cwd);
   if (!project) return { global, effective: mergeConfig(global) };
   return { global, project: project.config, effective: mergeConfig(global, project.config), projectPath: project.path };

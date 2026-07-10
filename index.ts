@@ -186,7 +186,8 @@ export default function (pi: ExtensionAPI) {
   };
 
   const reloadConfig = async (ctx: any) => {
-    configState.value = await loadConfigState(ctx.cwd ?? process.cwd());
+    const projectTrusted = typeof ctx.isProjectTrusted === "function" && ctx.isProjectTrusted() === true;
+    configState.value = await loadConfigState(ctx.cwd ?? process.cwd(), projectTrusted);
     currentConfig.value = configState.value.effective;
   };
 
