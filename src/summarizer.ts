@@ -1,5 +1,5 @@
-import { stream } from "@mariozechner/pi-ai";
-import type { AssistantMessage } from "@mariozechner/pi-ai";
+import { stream } from "@mariozechner/pi-ai/compat";
+import type { AssistantMessage } from "@mariozechner/pi-ai/compat";
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import type {
   CapturedBatch,
