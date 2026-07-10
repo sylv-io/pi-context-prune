@@ -39,5 +39,8 @@
     "@mariozechner/pi-ai": "*",
     "@mariozechner/pi-tui": "*",
     "@sinclair/typebox": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1"
   }
 }
