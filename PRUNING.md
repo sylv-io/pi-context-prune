@@ -16,9 +16,9 @@
 8. [The Sweet Spot: Batch and Prune](#the-sweet-spot-batch-and-prune)
 9. [Advanced Features & Safeguards](#advanced-features--safeguards)
 10. [Why Summarization Works: Research Evidence](#why-summarization-works-research-evidence)
-   - [SUPO — Summarization augmented Policy Optimization](#supo--summarization-augmented-policy-optimization)
-   - [ReSum — Recursive Summarization for Long-Horizon Agents](#resum--recursive-summarization-for-long-horizon-agents)
-   - [ACON — Agent Context Optimization](#acon--agent-context-optimization)
+    - [SUPO — Summarization augmented Policy Optimization](#supo--summarization-augmented-policy-optimization)
+    - [ReSum — Recursive Summarization for Long-Horizon Agents](#resum--recursive-summarization-for-long-horizon-agents)
+    - [ACON — Agent Context Optimization](#acon--agent-context-optimization)
 11. [Summary](#summary)
 
 ---
@@ -84,7 +84,7 @@ In a long session this can grow to **30k–100k+ tokens**. The model pays for ev
 
 ## What Pruning Does
 
-`pi-context-prune` intercepts completed tool-call batches, summarizes them, and replaces the raw outputs with compact summaries in future context. The original data is archived in the session index.
+`pi-context-prune` captures eligible completed tool-call batches and replaces raw outputs in future context with an LLM summary or deterministic placeholders. Captured results are stored in session index entries before their `toolResult` messages are filtered from later requests.
 
 ### ASCII: The same session *after* pruning Turns 1–5
 
@@ -109,8 +109,8 @@ In a long session this can grow to **30k–100k+ tokens**. The model pays for ev
 │               ║ • Build failed: circular dependency in     ║            │
 │               ║   utils/index.ts → fix by inlining helpers ║            │
 │               ║                                            ║            │
-│               ║ Summarized toolCallIds: tc-001..tc-007     ║            │
-│               ║ Use context_tree_query to retrieve original║            │
+│               ║ Summarized tool refs: t1..t7               ║            │
+│               ║ Use context_tree_query to inspect originals║            │
 │               ╚════════════════════════════════════════════╝            │
 │               ← ~200 tokens (was ~6,760 tokens)                         │
 │                                                                         │
@@ -168,15 +168,15 @@ graph TB
 
 - The `AssistantMessage` tool-call blocks are **kept** (they carry `toolCallId`s the model may reference later)
 - Only `ToolResultMessage` entries are **removed** from future context
-- Every pruned tool call is also copied into the pruner's runtime/session index with its `toolCallId`, tool name, args, status, turn index, timestamp, and full `resultText`
-- A summary message is injected as a "steer" (guaranteed to land before the next LLM call)
+- Every pruned tool call is copied into the runtime/session index with its `toolCallId`, tool name, args, status, turn index, timestamp, and captured `resultText`; short-ref aliases persist in summary metadata
+- A summary message is delivered before the next LLM call, either as a steer or as an appended session entry depending on the active delivery path
 - The session file retains the original history, and the pruner keeps an index of summarized tool outputs — pruning affects only what the *next* request sees in active context
 
 ---
 
 ## Pruned Data Is Still Available
 
-Pruning does **not** delete data. It moves raw tool results out of the hot path (active LLM context) and into an indexed archive the model can query later.
+Pruning does **not** rewrite or delete the original session messages. It moves raw tool results out of the hot path and stores captured results in an indexed archive that the model can query later.
 
 There are two separate things happening during pruning:
 
@@ -186,7 +186,7 @@ There are two separate things happening during pruning:
 That distinction is the core idea:
 
 - **Pruned from context** does **not** mean **lost**
-- It means **hidden from the default prompt**, but still **recoverable on demand**
+- It means **hidden from the default prompt**, but still **inspectable on demand within query limits**
 
 ### ASCII: How `context_tree_query` recovers pruned data
 
@@ -196,14 +196,14 @@ That distinction is the core idea:
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  [summary]  ... build failed: circular dependency ...                   │
-│             Summarized toolCallIds: `tc-006`                            │
-│             Use context_tree_query to retrieve originals                │
+│  [summary]  Summarized tool refs: `t6`                                  │
+│             Use context_tree_query to inspect originals                 │
 │                                                                         │
-│  ── LLM calls context_tree_query({ toolCallIds: ["tc-006"] }) ──        │
+│  ── LLM calls context_tree_query({ toolCallIds: ["t6"] }) ──            │
 │                                                                         │
 │  [tool]     ⌕  context_tree_query result                                │
 │             ┌─────────────────────────────────────────────────────┐     │
-│             │  Tool: bash (tc-006)                                │     │
+│             │  Tool: bash (t6)                                │         │
 │             │  Status: done                                       │     │
 │             │  ─────────────────────────────────────────────────  │     │
 │             │  $ npm run build                                    │     │
@@ -216,11 +216,11 @@ That distinction is the core idea:
 │             │  [error] TS2345: Argument of type 'X' not assignable│     │
 │             │          to parameter of type 'Y'...                │     │
 │             │                                                     │     │
-│             │  (truncated to 8,000 bytes / 200 lines)             │     │
+│             │  (truncated at Pi's current line or byte limit)     │     │
 │             └─────────────────────────────────────────────────────┘     │
 │                                                                         │
-│  The LLM now has the full build log back in context, on demand,         │
-│  without permanently inflating the context window.                      │
+│  The LLM receives a bounded view of the stored build log on demand.     │
+│  Truncation is marked; reread or narrow the source when exact.          │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -243,19 +243,18 @@ Conceptually, each indexed record looks like this:
 }
 ```
 
-This matters because the summary is **not** the only surviving representation of the old tool call.
-The model still has access to:
+This matters because the summary is **not** the only surviving representation of the old tool call. Summary messages expose short refs that map to the stored IDs. Through a bounded query, the model can inspect:
 
 - the original `toolCallId`
 - the tool name and arguments
 - whether the tool errored
 - which turn it came from
-- the full original raw result text
+- the captured raw result text, subject to line and byte limits when returned as tool content
 
 So after pruning, the model is working with a **two-layer memory**:
 
 1. **Hot memory:** compact summary text kept directly in context
-2. **Cold memory:** full raw tool outputs stored in the pruner index and retrievable by ID
+2. **Cold memory:** captured raw tool outputs stored in the pruner index and addressable by short ref
 
 ### What is removed vs what is preserved
 
@@ -271,12 +270,12 @@ So after pruning, the model is working with a **two-layer memory**:
 The intended recovery flow is:
 
 1. The model reads a summary message.
-2. The summary lists the `toolCallId`s that were summarized.
-3. The model decides the summary is not enough and wants exact raw output.
+2. The summary lists short refs such as `t1` and `t2`.
+3. The model decides the summary is not enough and requests one or more refs.
 4. The model calls `context_tree_query({ toolCallIds: [...] })`.
-5. The tool looks up those IDs in the pruner index.
-6. The tool returns the original stored output back into the current turn.
-7. The model can now inspect that raw result and continue reasoning.
+5. The tool resolves each short ref to its stored ID.
+6. The tool returns a line- and byte-bounded view and marks truncation.
+7. The model can inspect that view, then reread or narrow the source when exact content is required.
 
 ### ASCII: end-to-end "prune, then re-read" flow
 
@@ -290,9 +289,9 @@ raw tool results exist in context
 batch gets summarized
         │
         ├─► summary message added to context
-        │      └─► includes summarized toolCallIds
+        │      └─► includes short refs such as t1 and t2
         │
-        ├─► tool results indexed by toolCallId
+        ├─► tool results indexed by toolCallId and mapped from short refs
         │      └─► full raw resultText stored in index/session
         │
         └─► old toolResult messages removed from future context
@@ -303,16 +302,16 @@ later...
 model sees summary and decides: "I need the exact old output"
         │
         ▼
-context_tree_query({ toolCallIds: ["tc-006"] })
+context_tree_query({ toolCallIds: ["t6"] })
         │
         ▼
-query tool loads indexed record for tc-006
+query tool resolves t6 and loads its indexed record
         │
         ▼
-original raw output is returned into the current turn
+bounded output is returned into the current turn
         │
         ▼
-model continues with exact old context back in view
+model continues or rereads the source if truncation matters
 ```
 
 ### Why this is important
@@ -320,11 +319,11 @@ model continues with exact old context back in view
 This is what makes pruning safe for real agent work:
 
 - summaries keep the default context small
-- `toolCallId`s keep old work addressable
-- `context_tree_query` makes the archive readable again
-- the model can "page in" exact old context only when it actually needs it
+- short refs keep indexed work addressable
+- `context_tree_query` makes a bounded archive view available again
+- the model can page in relevant output and detect when truncation requires a narrower query or source reread
 
-So the extension is **not asking the model to trust summaries forever**. It is asking the model to use summaries as the default view, while keeping a precise escape hatch back to the original raw data.
+So the extension is **not asking the model to trust summaries forever**. It is asking the model to use summaries as the default view, while keeping a bounded escape hatch back to indexed raw data.
 
 ---
 
@@ -569,12 +568,14 @@ Summarizing tool-call history is not just a hack — it is an active research ar
 SUPO integrates summarization directly into the RL training pipeline for tool-using agents. Instead of treating context compression as an afterthought, the policy gradient is derived to optimize **both** tool-use behavior **and** summarization strategy end-to-end.
 
 **Method:**
+
 - Periodically compresses tool-using history via LLM-generated summaries
 - Retains task-relevant information in compact form
 - Derives a policy gradient that lets standard LLM RL infrastructure optimize both behaviors simultaneously
 - Enables training beyond fixed context limits
 
 **Key results:**
+
 - Significantly improved success rate on interactive function calling and search tasks
 - **Same or lower working context length** compared to baselines that don't summarize
 - Test-time scaling: increasing the maximum summarization rounds during evaluation further improves performance
@@ -593,12 +594,14 @@ SUPO proves that summarization is not just about saving tokens — it actively *
 ReSum addresses the fundamental conflict between **exploration** (needing many tool calls) and **context limits** (fixed window size). Current agents append every thought/action/observation to history until they crash into the context ceiling.
 
 **Method:**
+
 - Periodically invokes an external **summary tool** to condense interaction history
 - The agent restarts reasoning from the compressed summary
 - Introduces **ReSum-GRPO**: adapts Group Relative Policy Optimization with **advantage broadcasting** — propagates final trajectory rewards across all segments so early exploration steps get proper credit
 - Trained a specialized **ReSumTool-30B** to extract key evidence and propose next steps
 
 **Key results:**
+
 - **4.5% improvement** over ReAct in training-free settings
 - **Further 8.2% gain** with ReSum-GRPO training
 - A 30B ReSum-enhanced agent with only 1K training samples achieves competitive performance with leading open-source models
@@ -618,6 +621,7 @@ ReSum validates the exact architecture `pi-context-prune` uses: an external summ
 ACON is a unified framework that compresses **both** environment observations and interaction histories into "concise yet informative condensations." It treats compression as an optimization problem: maximize task reward while minimizing context cost.
 
 **Method:**
+
 - **Gradient-free** — uses natural language space optimization (no model fine-tuning)
 - **Failure-driven guideline optimization:** runs the agent with and without compression, collects cases where compression caused failure, and uses an optimizer LLM to refine compression guidelines
 - Two-step alternation:
@@ -626,6 +630,7 @@ ACON is a unified framework that compresses **both** environment observations an
 - **Distillation:** optimized compressor can be distilled into smaller models (e.g., Qwen-14B) with >95% accuracy retention
 
 **Key results:**
+
 - **26–54% reduction in peak tokens** across AppWorld, OfficeBench, and Multi-objective QA
 - Preserves task performance with large models
 - **Smaller LMs improve 20–46%** as agents when context compression removes distracting noise
@@ -643,7 +648,7 @@ ACON demonstrates that **compression not only saves tokens but can improve agent
 | **Context grows without bound** | Replaces raw tool outputs (~thousands of tokens) with compact summaries (~hundreds) |
 | **Signal lost in noise** | Summaries surface the key decisions and facts; raw data is demoted to on-demand query |
 | **Cache performance** | Batch-then-prune modes (`agent-message`, `on-context-tag`) minimize cache invalidation |
-| **Data availability** | `context_tree_query` recovers full original outputs at any time |
+| **Data availability** | `context_tree_query` returns bounded indexed output by short ref and marks truncation |
 | **Empirical benefit** | SUPO, ReSum, and ACON all show summarization improves or preserves task success while reducing context length 26–54% |
 
 ### Choosing a mode

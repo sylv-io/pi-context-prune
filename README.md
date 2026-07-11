@@ -1,17 +1,17 @@
 # pi-context-prune
 
-A [Pi coding-agent](https://github.com/badlogic/pi-mono) extension that **summarizes completed tool-call batches**, prunes raw tool outputs from future LLM context, and exposes a `context_tree_query` escape hatch to recover any original output on demand.
+A [Pi coding-agent](https://github.com/badlogic/pi-mono) extension that **summarizes or indexes completed tool-call batches**, prunes raw tool outputs from future LLM context, and exposes a bounded `context_tree_query` escape hatch for inspecting indexed outputs on demand.
 
 ## Related Extensions
 
 Here are some other Pi extensions that work well alongside context pruning:
 
-*   **[pi-context-usage](https://github.com/championswimmer/pi-context-usage) ([npm](https://www.npmjs.com/package/pi-context-usage))**
-    *   **What it does:** Visualizes the current size of your LLM context and breaks it down to show exactly what is taking up space (system prompt, user messages, tool calls, tool results, etc.).
-    *   **Why use it:** It's the perfect way to see *why* you need pruning. You can use it to inspect your context before and after a prune to see exactly how much space the `pi-context-prune` extension just saved you.
-*   **[pi-cache-graph](https://github.com/championswimmer/pi-cache-graph) ([npm](https://www.npmjs.com/package/pi-cache-graph))**
-    *   **What it does:** Plots your provider's prefix cache hits and misses as a live graph inside the TUI.
-    *   **Why use it:** Pruning context directly impacts cache re-use. This extension lets you see the real-time effect of your chosen `pruneOn` mode on cache stability.
+* **[pi-context-usage](https://github.com/championswimmer/pi-context-usage) ([npm](https://www.npmjs.com/package/pi-context-usage))**
+  * **What it does:** Visualizes the current size of your LLM context and breaks it down to show exactly what is taking up space (system prompt, user messages, tool calls, tool results, etc.).
+  * **Why use it:** It's the perfect way to see *why* you need pruning. You can use it to inspect your context before and after a prune to see exactly how much space the `pi-context-prune` extension just saved you.
+* **[pi-cache-graph](https://github.com/championswimmer/pi-cache-graph) ([npm](https://www.npmjs.com/package/pi-cache-graph))**
+  * **What it does:** Plots your provider's prefix cache hits and misses as a live graph inside the TUI.
+  * **Why use it:** Pruning context directly impacts cache re-use. This extension lets you see the real-time effect of your chosen `pruneOn` mode on cache stability.
 
 ---
 
@@ -21,13 +21,13 @@ Here are some other Pi extensions that work well alongside context pruning:
 
 As long agent sessions grow, every tool call adds token-heavy output to the context window. Most of it is not needed verbatim after the first use. This extension:
 
-1. **Detects** when an assistant turn finishes calling tools (`turn_end`)
-2. **Summarizes** that batch of tool calls using your configured model
-3. **Injects** a compact summary message before the next LLM call (`deliverAs: "steer"`)
-4. **Prunes** the original verbose tool outputs from future context (`context` event)
-5. **Preserves** every original output in the session index — retrievable at any time via `context_tree_query`
+1. **Captures** completed tool calls from live turns and the current session branch.
+2. **Waits** for the configured trigger and minimum-size guard, unless a manual flush uses `--force`.
+3. **Groups** eligible calls according to `batchingMode`.
+4. **Replaces** each accepted batch with either an LLM summary or deterministic placeholders.
+5. **Prunes** indexed raw tool results from future context while preserving protected and configured results.
 
-The session file is never modified. Pruning only affects the next request's context build.
+Pruning does not rewrite existing message entries. It appends index, summary, frontier, statistics, and diagnostic entries to the session JSONL file. Future request contexts omit indexed `toolResult` messages outside the protected tail.
 
 ## Installation
 
@@ -53,10 +53,10 @@ If you want the latest unreleased changes from `main`, install directly from the
 
 ```bash
 # Install globally (all projects)
-pi install git:github.com/championswimmer/pi-context-prune
+pi install git:github.com/sylv-io/pi-context-prune
 
 # Or install for the current project only
-pi install -l git:github.com/championswimmer/pi-context-prune
+pi install -l git:github.com/sylv-io/pi-context-prune
 ```
 
 > **Note:** The `main` branch may contain unreleased or experimental changes. Prefer the npm install for day-to-day use.
@@ -68,13 +68,13 @@ pi install -l git:github.com/championswimmer/pi-context-prune
 pi -e npm:pi-context-prune
 
 # Or try the latest from git without installing
-pi -e git:github.com/championswimmer/pi-context-prune
+pi -e git:github.com/sylv-io/pi-context-prune
 ```
 
 ### From source (development)
 
 ```bash
-git clone https://github.com/championswimmer/pi-context-prune
+git clone https://github.com/sylv-io/pi-context-prune
 cd pi-context-prune
 pi -e .
 ```
@@ -99,9 +99,10 @@ On providers with **prefix / prompt caching** (for example Anthropic-style promp
 That is why **`agent-message` is the default**: it batches a whole stretch of tool work, prunes **once** when the agent is done and sends a final text reply, and then leaves the new shorter context stable again. You usually pay one cache bust per meaningful work batch instead of one cache bust per tool turn.
 
 References:
-- Anthropic prompt caching docs: <https://docs.claude.com/en/docs/build-with-claude/prompt-caching>
-- AWS Bedrock prompt caching overview: <https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html>
-- `pi-context` extension (`context_tag`, `context_log`, `context_checkout`): <https://github.com/ttttmr/pi-context>
+
+* Anthropic prompt caching docs: <https://docs.claude.com/en/docs/build-with-claude/prompt-caching>
+* AWS Bedrock prompt caching overview: <https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html>
+* `pi-context` extension (`context_tag`, `context_log`, `context_checkout`): <https://github.com/ttttmr/pi-context>
 
 ### Mode trade-offs
 
@@ -110,18 +111,18 @@ References:
 | `every-turn` | Immediately after each tool-calling turn | Smallest raw context as fast as possible; easiest to reason about | **Busts prompt cache the most often** because earlier context is rewritten after almost every tool turn; adds summarizer latency every turn; can cost more overall despite saving context tokens | **Debugging only.** Useful to test the extension, inspect summaries, or study behavior — not recommended for normal day-to-day use |
 | `on-context-tag` | When `context_tag` is called | Lets you align pruning with explicit milestones / save-points; fewer cache busts than `every-turn` if you tag sparingly | Only auto-triggers if you have the [`pi-context`](https://github.com/ttttmr/pi-context) extension installed, because that extension provides the `context_tag` tool; if you tag too often, you still churn cache; if you forget to tag, pending batches keep growing | Good if you already use `pi-context` and think in checkpoints / milestones |
 | `on-demand` | Only when you run `/pruner now` | Maximum manual control; easiest mode for preserving cache because nothing changes until you decide; good for long investigations where you want to delay pruning | Easy to forget; pending batches can grow large; you must manage timing yourself | Good for advanced users who want explicit control over when the cache is intentionally invalidated |
-| `agent-message` | When the agent sends a final text-only response, or when the agent loop ends | Best balance of automation, context savings, and cache friendliness; batches many tool turns into one prune; after the prune, future requests become highly cacheable again until the next batch finishes | You do not reclaim space mid-batch; if a run goes extremely long before the final reply, context can grow more than in aggressive modes | **Recommended default.** Safest general-purpose mode for normal coding-agent workflows |
+| `agent-message` | When the agent sends a final text-only response | Best balance of automation, context savings, and cache friendliness; batches many tool turns into one prune; after the prune, future requests become highly cacheable again until the next batch finishes | You do not reclaim space mid-batch; if the loop ends before a final text-only response, batches remain pending for a later manual flush | **Recommended default.** Safest general-purpose mode for normal coding-agent workflows |
 | `agentic-auto` | The model decides by calling `context_prune` | Lets the agent compact context before it gets too large; can work well for long autonomous runs when the model is disciplined | Depends on model judgment; if the model calls `context_prune` too often, it can churn cache similarly to `every-turn`; behavior is less predictable than `agent-message` | Good for longer autonomous sessions after prompt-tuning and observation |
 
 ### How each mode works
 
 **`every-turn`** — Every tool-calling turn is summarized and pruned immediately. This is intentionally aggressive. It is useful for debugging the extension or validating summaries, but in real work it usually rewrites the prompt prefix too frequently and hurts provider-side prompt caching.
 
-**`on-context-tag`** — Tool-call turns are queued until `context_tag` is called, then all pending batches are summarized in one LLM call and pruned together. This mode is meant to pair with the [`pi-context`](https://github.com/ttttmr/pi-context) extension; without that extension, `context_tag` is not available, so this mode will not auto-trigger unless you switch modes or flush manually with `/pruner now`.
+**`on-context-tag`** — Tool-call turns are queued until `context_tag` is called, then eligible batches are processed and pruned. Summarizer mode uses one call per batch in parallel. This mode is meant to pair with the [`pi-context`](https://github.com/ttttmr/pi-context) extension; without that extension, `context_tag` is not available, so this mode will not auto-trigger unless you switch modes or flush manually with `/pruner now`.
 
 **`on-demand`** — Tool-call turns are batched but never summarized automatically. You decide when to flush with `/pruner now`. This is the most manual mode and also the easiest to keep cache-friendly, because you can wait until a large chunk of work is complete before changing earlier context.
 
-**`agent-message`** — Tool-call turns are batched. When the agent finally replies with a normal text answer (a turn with no tool calls), all pending batches are summarized and pruned together. If the agent loop ends before that happens, a safety-net flush runs on `agent_end`. This mode is the default because it usually causes just one context rewrite per meaningful task batch.
+**`agent-message`** — Tool-call turns are batched. When the agent replies with a normal text answer that has no tool calls, pending batches are flushed. If the agent loop ends first, the footer reports the remaining pending count. It does not start a new summarizer call during shutdown. This mode is the default because it usually causes one context rewrite per meaningful task batch.
 
 **`agentic-auto`** — The `context_prune` tool is activated and exposed to the LLM. The system prompt tells the model to use it only after a meaningful batch of related tool calls, not after every small step. Used well, this gives the agent flexibility; used badly, it can over-prune and reduce cache effectiveness.
 
@@ -143,16 +144,22 @@ The extension registers the `/pruner` command:
 | `/pruner thinking <level>` | Set summarizer thinking (`default`, `off`, `minimal`, `low`, `medium`, `high`, `xhigh`) |
 | `/pruner prune-on` | Interactive picker over all trigger modes |
 | `/pruner prune-on <mode>` | Set trigger mode directly |
+| `/pruner batching` | Interactively choose summary granularity |
+| `/pruner batching <mode>` | Set batching to `turn` or `agent-message` |
 | `/pruner stats` | Show cumulative summarizer token/cost stats |
+| `/pruner diagnostics` | Show recent attempts, skip reasons, frontier outcomes, and cumulative prune totals |
 | `/pruner tree` | Browse pruned tool calls in a foldable tree browser; press `Ctrl-O` on a summary to open it in a bordered overlay |
-| `/pruner now` | Flush pending tool calls immediately (works in all modes) with a live progress overlay that shows streamed received-character counts per batch |
+| `/pruner now` | Flush pending tool calls when the minimum token or tool-call guard is met |
+| `/pruner now --force` | Flush pending tool calls without the minimum-size guard |
 | `/pruner help` | Show full help text |
+
+A below-threshold attempt leaves eligible work pending and does not advance the frontier. An oversized completed summary keeps that batch's raw results and advances the frontier so the same range is not retried indefinitely.
 
 ### Settings overlay
 
-`/pruner settings` opens a TUI overlay with interactive items for pruning, summarizer, token-estimation, reminder, and batching settings.
+`/pruner settings` opens a TUI overlay for the trigger, replacement strategy, summarizer, token estimator, reminder, and batching settings.
 
-All changes are saved immediately to `~/.pi/agent/context-prune/settings.json` and reflected in the footer status widget when it is enabled.
+Changes are saved immediately to the active scope and reflected in the footer when enabled. The active scope is the trusted project overlay when one was loaded. Otherwise it is `~/.pi/agent/context-prune/settings.json`.
 
 ## Tools
 
@@ -165,17 +172,18 @@ Summarized tool refs: `t1`, `t2`
 Use `context_tree_query` with these refs to retrieve the original full outputs.
 ```
 
-Those short refs are generated by the extension and mapped back to the real `toolCallId`s in the summary message metadata. The LLM only sees the short refs in future context; the full IDs stay in the stored details used by `context_tree_query` and internal tree/browser recovery. The tool is always available when the extension is loaded.
+Those short refs are generated by the extension and mapped to stored `toolCallId`s in summary metadata. Pass the short refs to `context_tree_query`. Full IDs remain accepted for compatibility. The tool returns bounded text through Pi's line and byte limits and marks truncated results. The session index retains the captured result, but one query is not guaranteed to return every byte to the model. Reread the original source or narrow the request when exact content matters. The tool is available whenever the extension is loaded.
 
 ### `context_prune` (agentic-auto mode only)
 
 When `pruneOn` is set to `agentic-auto`, the `context_prune` tool is activated and made available to the LLM. It is removed from the active tool list in all other modes.
 
 When the model calls `context_prune`:
-- All pending tool-call batches are summarized together (parallel one-call-per-batch by default, or sequentially in `/pruner now` so the overlay can show live progress)
-- While the tool is running, compact live progress is streamed into the tool output box above the input (for example `Context prune running… batch 2/4 · 1.2k chars received`)
-- If the summary is smaller than the raw tool-result text it would replace, the original outputs are pruned from future context and a summary message is injected as a steer
-- If the summary is larger than the raw tool-result text, pruning is skipped for that attempted range: the original tool results remain in context, but the prune frontier still advances so the next prune attempt starts after that range instead of retrying it forever
+
+* Eligible batches are processed with one LLM call per batch in parallel by default. `/pruner now` processes them sequentially so its widget can show per-batch progress.
+* While the tool is running, compact live progress is streamed into the tool output box above the input (for example `Context prune running… batch 2/4 · 1.2k chars received`)
+* If the summary is smaller than the raw tool-result text it would replace, the original outputs are pruned from future context and a summary message is injected as a steer
+* If the summary is larger than the raw tool-result text, pruning is skipped for that attempted range: the original tool results remain in context, but the prune frontier still advances so the next prune attempt starts after that range instead of retrying it forever
 
 The tool is guided by a system prompt that instructs the model to use it after completing a meaningful batch of work (not after every trivial call).
 
@@ -190,7 +198,9 @@ Global config is stored in `~/.pi/agent/context-prune/settings.json`:
   "summarizerModel": "default",
   "summarizerThinking": "default",
   "pruneOn": "agent-message",
+  "pruneStrategy": "summarize",
   "remindUnprunedCount": true,
+  "batchingMode": "turn",
   "preserveToolResults": [],
   "protectedTailTokens": 0,
   "minPruneRawTokens": 8000,
@@ -206,6 +216,8 @@ Global config is stored in `~/.pi/agent/context-prune/settings.json`:
 | `summarizerModel` | `"default"` or `"provider/model-id"` | `"default"` |
 | `summarizerThinking` | `"default"`, `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` | `"default"` |
 | `pruneOn` | `"every-turn"`, `"on-context-tag"`, `"on-demand"`, `"agent-message"`, `"agentic-auto"` | `"agent-message"` |
+| `pruneStrategy` | `"summarize"`, `"placeholder"` | `"summarize"` |
+| `batchingMode` | `"turn"`, `"agent-message"` | `"turn"` |
 | `remindUnprunedCount` | `true` / `false` | `true` |
 | `preserveToolResults` | Array of tool-name and arg glob rules | `[]` |
 | `protectedTailTokens` | Non-negative estimated token count | `0` |
@@ -215,23 +227,26 @@ Global config is stored in `~/.pi/agent/context-prune/settings.json`:
 | `minPruneRawTokens` | Non-negative estimated token count | `8000` |
 | `minPruneToolCalls` | Positive eligible tool-call count, or `0` to disable | `8` |
 
-- `showPruneStatusLine: true` keeps the prune footer widget and the automatic queued-turn notice visible. Turn it off if you want pruning to stay active without the extra status noise.
-- `remindUnprunedCount: true` appends a small ephemeral `<pruner-note>` to the last tool result before each LLM call to remind the model of the number of unpruned tool calls in context. This only has an effect when `pruneOn` is set to `"agentic-auto"`.
+* `pruneStrategy: "summarize"` uses one summarizer call per eligible batch. `"placeholder"` skips the LLM call and writes deterministic tool refs, argument hints, status, and estimated size.
+* `batchingMode: "turn"` keeps one batch per assistant turn. `"agent-message"` merges captured turns within the same user-to-agent exchange before replacement.
+* `showPruneStatusLine: true` keeps the prune footer widget and the automatic queued-turn notice visible. Turn it off if you want pruning to stay active without the extra status noise.
+* `remindUnprunedCount: true` appends a small ephemeral `<pruner-note>` to the last tool result before each LLM call to remind the model of the number of unpruned tool calls in context. This only has an effect when `pruneOn` is set to `"agentic-auto"`.
 
-- `summarizerModel: "default"` means the current active Pi model. An explicit value like `"anthropic/claude-haiku-3-5"` uses that model for summarization (must be registered in Pi and have an API key).
-- `summarizerThinking: "default"` preserves old behavior: no explicit thinking/reasoning option is added to summarizer calls.
-- `summarizerThinking: "off"` requests no summarizer reasoning where the provider adapter supports an explicit disable path. Some providers may still fall back to their own default behavior.
-- `"minimal"`, `"low"`, `"medium"`, `"high"`, and `"xhigh"` request that thinking level for summarizer calls where supported. For cheap background summarization, prefer `"minimal"` or `"low"` with a small/fast model.
-- `preserveToolResults` keeps matching tool results as raw context. Matching results are not summarized, not indexed as summarized, and not pruned later. Rules match exact `toolName` strings and glob patterns over selected string arg values. All configured arg keys must match. Unless you configure rules, no tool results are preserved.
-- `protectedTailTokens` keeps the newest estimated tokens of the final model-facing context raw. A value of `0` disables this guard.
-- `tokenEstimator: "auto"` uses `js-tiktoken` with `tokenizerEncoding` when available, then falls back to a character estimate. Use `"chars"` for deterministic character-based estimates.
-- `charsPerToken` controls the character estimator used by `tokenEstimator: "chars"` and the tiktoken fallback.
-- `minPruneRawTokens` and `minPruneToolCalls` are alternative automatic pruning thresholds. Pruning starts when either threshold is reached after protected and preserved results are excluded. Set `minPruneToolCalls` to `0` to disable the call-count threshold.
-- Default `tokenEstimator` and `tokenizerEncoding` values are optional and omitted when settings are saved.
-- Project config can be stored in `<project>/.pi/context-prune/settings.json`.
-  It is partial, and any key present there overrides the global value for that
-  project. Arrays are replaced, not appended.
-- Settings are persisted on every change via the `/pruner` command or the
+* `summarizerModel: "default"` means the current active Pi model. An explicit value like `"anthropic/claude-haiku-3-5"` uses that model for summarization (must be registered in Pi and have an API key).
+* `summarizerThinking: "default"` preserves old behavior: no explicit thinking/reasoning option is added to summarizer calls.
+* `summarizerThinking: "off"` requests no summarizer reasoning where the provider adapter supports an explicit disable path. Some providers may still fall back to their own default behavior.
+* `"minimal"`, `"low"`, `"medium"`, `"high"`, and `"xhigh"` request that thinking level for summarizer calls where supported. For cheap background summarization, prefer `"minimal"` or `"low"` with a small/fast model.
+* `preserveToolResults` keeps matching tool results as raw context. Matching results are not summarized, not indexed as summarized, and not pruned later. Rules match exact `toolName` strings and glob patterns over selected string arg values. All configured arg keys must match. Unless you configure rules, no tool results are preserved.
+* `protectedTailTokens` keeps the newest estimated tokens of the final model-facing context raw. A value of `0` disables this guard.
+* `tokenEstimator: "auto"` uses `js-tiktoken` with `tokenizerEncoding` when available, then falls back to a character estimate. Use `"chars"` for deterministic character-based estimates.
+* `charsPerToken` controls the character estimator used by `tokenEstimator: "chars"` and the tiktoken fallback.
+* `minPruneRawTokens` and `minPruneToolCalls` are alternative automatic pruning thresholds. Pruning starts when either threshold is reached after protected and preserved results are excluded. Set `minPruneToolCalls` to `0` to disable the call-count threshold.
+* Default `tokenEstimator` and `tokenizerEncoding` values are optional and omitted when settings are saved.
+* Project config can be stored in `<project>/.pi/context-prune/settings.json`.
+  Pi loads this partial overlay only when `ctx.isProjectTrusted()` returns true.
+  Untrusted projects use global settings only. Present project keys override
+  global values, and arrays replace rather than append.
+* Settings are persisted on every change via the `/pruner` command or the
   settings overlay. When project config is active, changes are saved to the
   project file.
 
@@ -252,9 +267,9 @@ Example for preserving skill instruction files loaded by `read`:
 
 ### Choosing a Summarizer Model
 
-The default (`"default"`) reuses whatever model you have active in Pi. **This is convenient but wasteful** — you don't need a powerful coding model to write a bullet-point summary of tool outputs. Using a cheaper, faster model here reduces both latency and cost without any quality trade-off.
+The default (`"default"`) reuses the active Pi model. A smaller model can reduce latency and cost, but summary quality depends on the model and the tool output. Test recovery and summary quality for your workflow before relying on a cheaper model.
 
-> **Rule of thumb:** pick the smallest/fastest model available on your current subscription or API plan.
+> **Rule of thumb:** start with a fast model available on your current plan, then inspect summaries before reducing quality or reasoning effort further.
 
 | Subscription / API plan | Recommended summarizer model |
 |---|---|
@@ -291,34 +306,40 @@ Or directly in `~/.pi/agent/context-prune/settings.json`:
 index.ts                    — entry point, wires events + modules
 src/
   types.ts                  — shared types, constants, PruneOn modes
-  config.ts                 — load/save ~/.pi/agent/context-prune/settings.json
+  config.ts                 — merge global and trusted-project settings
   batch-capture.ts          — serialize turn_end event → CapturedBatch
   summarizer.ts             — resolve model, call LLM, build summary text
   indexer.ts                — Map<toolCallId, ToolCallRecord> + session persistence
-  pruner.ts                 — filter context event messages
-  token-estimator.ts        — protected-tail token estimates via js-tiktoken or character fallback
-  query-tool.ts             — context_tree_query tool registration
-  context-prune-tool.ts     — context_prune tool registration (agentic-auto)
-  frontier.ts               — persisted prune-frontier tracker for last attempted prune boundary
-  stats.ts                  — StatsAccumulator for cumulative token/cost tracking
-  tree-browser.ts           — foldable tree browser for /pruner tree
-  commands.ts               — /pruner command + settings overlay + message renderer
+  pruner.ts                 — filter indexed tool results from request context
+  prune-guard.ts             — eligibility filters and minimum-size guard
+  preserve-tool-results.ts   — tool-name and argument preservation rules
+  token-estimator.ts         — protected-tail and guard token estimates
+  placeholder.ts             — deterministic replacement strategy
+  query-tool.ts              — context_tree_query tool registration
+  context-prune-tool.ts      — context_prune tool registration (agentic-auto)
+  frontier.ts                — persisted prune-attempt boundary
+  diagnostics.ts             — append-only attempt diagnostics
+  stats.ts                   — cumulative summarizer token/cost tracking
+  tree-browser.ts            — foldable tree browser for /pruner tree
+  commands.ts                — /pruner command, settings overlay, progress widget, renderer
 ```
 
 ### Event flow
 
 ```
 session_start
-  └─► loadConfig()              read ~/.pi/agent/context-prune/settings.json
+  └─► loadConfigState()         read global config and trusted project overlay
   └─► indexer.reconstruct()     rebuild Map from session branch entries
   └─► statsAccum.reconstruct()  rebuild stats from session branch entries
   └─► frontier.reconstruct()    rebuild last prune-attempt boundary from session entries
+  └─► diagnostics.reconstruct() rebuild attempt history from session entries
   └─► syncToolActivation()      activate/deactivate context_prune tool
 
 session_tree
   └─► indexer.reconstruct()     rebuild Map (branch may have different history)
   └─► statsAccum.reconstruct()  rebuild stats (branch may have different history)
   └─► frontier.reconstruct()    rebuild last prune-attempt boundary for the branch
+  └─► diagnostics.reconstruct() rebuild attempt history for the branch
   └─► clear pendingBatches      discard queued batches from old branch
 
 turn_end (tool calls present + enabled)
@@ -332,7 +353,7 @@ tool_execution_end (context_tag, on-context-tag mode)
   └─► flushPending()
 
 agent_end
-  └─► update footer status only if batches remain pending
+  └─► update footer status only if batches remain pending; no shutdown flush
 
 context_prune tool call (agentic-auto mode)
   └─► flushPending()
@@ -340,7 +361,8 @@ context_prune tool call (agentic-auto mode)
 flushPending()
   └─► scan the session branch for completed unpruned tool results, including mid-turn subsets
   └─► trim against index/frontier so already-attempted prefixes are ignored
-  └─► summarizeBatches()         call LLM(s) → summary text + usage stats
+  └─► enforce minimum guard unless forced; below-threshold work stays pending and frontier stays put
+  └─► summarizeBatches() or placeholders → one replacement per batch
   └─► compare summary chars vs raw tool-result chars
   └─► if smaller: persist index + inject summary, then advance frontier
   └─► if larger: keep original tool results, skip summary/index writes, still advance frontier
@@ -356,38 +378,38 @@ before_agent_start (agentic-auto mode)
 
 ### Session persistence
 
-- **Config** lives in `~/.pi/agent/context-prune/settings.json` — the extension's own file, independent of Pi's project settings
-- **Index** is persisted via `pi.appendEntry("context-prune-index", { toolCalls })` — one entry per summarized batch, NOT in LLM context
-- **Prune frontier** is persisted via `pi.appendEntry("context-prune-frontier", ...)` — it records the last attempted prune boundary even when an oversized summary is rejected
-- **Summaries** are injected as `custom_message` entries with `customType: "context-prune-summary"` — these ARE in LLM context (replacing the raw outputs only when pruning is accepted). Their visible text uses short refs, while the `details.toolCallRefs` metadata keeps the full `toolCallId` mapping for later recovery.
-- The underlying session JSONL file always retains the original `ToolResultMessage` entries unchanged
+* **Config** starts with `~/.pi/agent/context-prune/settings.json`. A trusted project may overlay fields from `<project>/.pi/context-prune/settings.json`
+* **Index** is persisted via `pi.appendEntry("context-prune-index", { toolCalls })` — one entry per accepted replacement batch, not in LLM context
+* **Prune frontier** is persisted via `pi.appendEntry("context-prune-frontier", ...)` — it records the last attempted prune boundary even when an oversized summary is rejected
+* **Statistics and diagnostics** are appended as non-model-facing custom entries and rebuilt for the active branch
+* **Summaries** are injected as `custom_message` entries with `customType: "context-prune-summary"` — these ARE in LLM context (replacing the raw outputs only when pruning is accepted). Their visible text uses short refs, while the `details.toolCallRefs` metadata keeps the full `toolCallId` mapping for later recovery.
+* The underlying session JSONL file always retains the original `ToolResultMessage` entries unchanged
 
 ### Footer status widget
 
 The extension registers a status widget in the Pi footer that shows the current state:
 
-- `prune: OFF (On agent message)` — pruning disabled, showing what mode it would use
-- `prune: ON (On agent message)` — pruning active with the current trigger mode
-- `prune: ON (Every turn) │ ↑1.2k ↓340 $0.003` — pruning active with cumulative stats (input/output tokens, cost)
-- `prune: 3 pending` — batches queued, waiting for the trigger
-- `prune: summarizing…` — currently running the summarizer LLM call
-- Live progress details are shown in richer surfaces instead: `/pruner now` uses the multi-row overlay, and agentic-auto `context_prune` streams updates in the tool output box above the input
-- When `showPruneStatusLine` is `false`, the footer stays clear and the queued-turn notice is suppressed, but pruning still works normally.
+* `prune: OFF (On agent message)` — pruning disabled, showing what mode it would use
+* `prune: ON (On agent message)` — pruning active with the current trigger mode
+* `prune: ON (Every turn) │ ↑1.2k ↓340 $0.003` — pruning active with cumulative stats (input/output tokens, cost)
+* `prune: 3 pending` — batches queued, waiting for the trigger
+* `prune: summarizing…` — currently running the summarizer LLM call
+* Live progress details are shown in richer surfaces instead: `/pruner now` uses an above-editor multi-row widget, and agentic-auto `context_prune` streams updates in the tool output box above the input
+* When `showPruneStatusLine` is `false`, the footer stays clear and the queued-turn notice is suppressed, but pruning still works normally.
 
 ## v1 Limitations
 
-- Summarization only runs when pruning is **enabled**. If you enable it mid-session, earlier turns are not retroactively summarized.
-- The `context_tree_query` tool is only active when the extension is loaded.
-- The `context_prune` tool is only activated in `agentic-auto` mode.
-- The summarizer call happens synchronously inside `turn_end`, adding latency between turns proportional to the summarizer model's response time.
-- Mid-turn pruning now supports completed subsets of a longer tool chain, but batching is still based on assistant-message groups rather than arbitrary semantic task labels.
-- The `/pruner tree` browser shows pruned tool calls grouped under their summaries. Press `Ctrl-O` on a summary node to open the full pruned summary message in a bordered overlay. It still does not recover full original tool outputs inline (use `context_tree_query` for that).
-- Summary grouping across multiple turns (e.g., "compress the last 5 summaries") is a follow-up item.
+* Replacement only runs while pruning is **enabled**. Branch capture can find earlier unindexed results, but preserve rules, the protected tail, existing index entries, and the frontier still limit eligibility.
+* The `context_tree_query` tool is only active when the extension is loaded. Its model-facing text is bounded and can be truncated.
+* The `context_prune` tool is only activated in `agentic-auto` mode.
+* Summarizer calls run within the event, command, or tool path that triggered the flush. They add latency according to the selected model and number of batches.
+* Mid-turn pruning now supports completed subsets of a longer tool chain, but batching is still based on assistant-message groups rather than arbitrary semantic task labels.
+* The `/pruner tree` browser shows pruned tool calls grouped under their summaries. Press `Ctrl-O` on a summary node to open the full pruned summary message in a bordered overlay. It does not show raw outputs inline; `context_tree_query` returns a bounded view and marks truncation.
+* Summary grouping across multiple turns (e.g., "compress the last 5 summaries") is a follow-up item.
 
 ## Follow-up ideas
 
-- Auto-summarize older unsummarized turns on `/pruner on`
-- Batch multiple turn summaries into a single meta-summary at compaction time
-- ~~`/pruner original-tree`~~ ✅ `/pruner tree` foldable tree browser — done
-- Configurable pruning policy (prune only large tool results, prune by token count threshold)
-- Tighter `/settings` integration once Pi exposes a settings UI API
+* Auto-summarize older unsummarized turns on `/pruner on`
+* Batch multiple turn summaries into a single meta-summary at compaction time
+* ~~`/pruner original-tree`~~ ✅ `/pruner tree` foldable tree browser — done
+* Tighter `/settings` integration once Pi exposes a settings UI API
