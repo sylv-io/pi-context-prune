@@ -14,7 +14,8 @@ export interface TokenEstimate {
 const encoders = new Map<TokenizerEncoding, Tiktoken>();
 
 function estimateChars(text: string, config: ContextPruneConfig): TokenEstimate {
-  const charsPerToken = Number.isFinite(config.charsPerToken) && config.charsPerToken > 0 ? config.charsPerToken : 4;
+  const charsPerToken =
+    Number.isFinite(config.charsPerToken) && config.charsPerToken > 0 ? config.charsPerToken : 4;
   return {
     tokens: text.length === 0 ? 0 : Math.ceil(text.length / charsPerToken),
     method: "chars",
@@ -25,7 +26,8 @@ function getEncoder(encoding: TokenizerEncoding): Tiktoken {
   const cached = encoders.get(encoding);
   if (cached) return cached;
 
-  const ranks = encoding === "cl100k_base" ? cl100kBase : encoding === "o200k_base" ? o200kBase : undefined;
+  const ranks =
+    encoding === "cl100k_base" ? cl100kBase : encoding === "o200k_base" ? o200kBase : undefined;
   if (!ranks) throw new Error(`Unsupported tokenizer encoding: ${encoding}`);
 
   const encoder = new Tiktoken(ranks);

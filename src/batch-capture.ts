@@ -9,7 +9,7 @@ export function captureBatch(
   message: any,
   toolResults: any[],
   turnIndex: number,
-  timestamp: number
+  timestamp: number,
 ): CapturedBatch {
   const content: any[] = Array.isArray(message?.content) ? message.content : [];
 
@@ -61,7 +61,7 @@ export function captureBatch(
 export function captureUnindexedBatchesFromSession(
   branch: any[],
   indexer: { isSummarized(id: string): boolean },
-  excludeToolNames: string[] = []
+  excludeToolNames: string[] = [],
 ): CapturedBatch[] {
   // branch is SessionEntry[]. Each message entry has { type: "message", message: AgentMessage }.
   // We must unwrap the SessionEntry wrapper before accessing role/toolCallId.
@@ -124,7 +124,9 @@ export function captureUnindexedBatchesFromSession(
       // an intermediate completed subset in the middle of a longer tool chain
       // without accidentally capturing later unresolved calls from the same
       // assistant message as "(no result)" placeholders.
-      const ts = entry.timestamp ? new Date(entry.timestamp).getTime() : (msg.timestamp ?? Date.now());
+      const ts = entry.timestamp
+        ? new Date(entry.timestamp).getTime()
+        : (msg.timestamp ?? Date.now());
       const batch = captureBatch(msg, results, currentTurnIndex, ts);
       batches.push({
         ...batch,
@@ -204,7 +206,7 @@ export function groupBatchesByMode(batches: CapturedBatch[], mode: BatchingMode)
   const out: CapturedBatch[] = [];
   // current tracks the mutable merged batch being built for the current group.
   // We spread into a plain object so we can mutate it without affecting the source.
-  let current: CapturedBatch & { userTurnGroup: number } | null = null;
+  let current: (CapturedBatch & { userTurnGroup: number }) | null = null;
 
   for (const batch of batches) {
     // Batches without a group key are passed through individually; they break

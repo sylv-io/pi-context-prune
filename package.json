@@ -4,6 +4,8 @@
   "description": "Pi extension package for pruning future context while preserving original tool-call history.",
   "type": "module",
   "scripts": {
+    "format": "biome format --write .",
+    "format:check": "biome format .",
     "build": "echo 'nothing to build'",
     "check": "echo 'nothing to check'",
     "validate": "node scripts/validate-context-prune.mjs"
@@ -41,6 +43,7 @@
     "@sinclair/typebox": "*"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.3",
     "@types/node": "^26.1.1"
   }
 }

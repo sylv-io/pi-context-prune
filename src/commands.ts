@@ -68,39 +68,53 @@ export function setPruneStatusWidget(
     ctx.ui.setStatus(STATUS_WIDGET_ID, undefined);
     return;
   }
-  ctx.ui.setStatus(STATUS_WIDGET_ID, typeof value === "string" ? value : pruneStatusText(config, value));
+  ctx.ui.setStatus(
+    STATUS_WIDGET_ID,
+    typeof value === "string" ? value : pruneStatusText(config, value),
+  );
 }
 
 // ── Subcommand list (for completions & interactive picker) ──────────────────
 
 const SUBCOMMANDS = [
   { value: "settings", label: "settings  — interactive settings overlay" },
-  { value: "on",       label: "on        — enable context pruning" },
-  { value: "off",      label: "off       — disable context pruning" },
-  { value: "status",  label: "status    — show status, model, thinking, prune trigger, and status line" },
-  { value: "model",   label: "model     — show or set the summarizer model" },
+  { value: "on", label: "on        — enable context pruning" },
+  { value: "off", label: "off       — disable context pruning" },
+  {
+    value: "status",
+    label: "status    — show status, model, thinking, prune trigger, and status line",
+  },
+  { value: "model", label: "model     — show or set the summarizer model" },
   { value: "thinking", label: "thinking  — show or set the summarizer thinking level" },
   { value: "prune-on", label: "prune-on  — show or set the trigger mode" },
   { value: "batching", label: "batching  — show or set the batching mode (turn / agent-message)" },
-  { value: "stats",   label: "stats     — show cumulative summarizer token/cost stats" },
+  { value: "stats", label: "stats     — show cumulative summarizer token/cost stats" },
   { value: "diagnostics", label: "diagnostics — show recent prune attempts and totals" },
-  { value: "tree",    label: "tree      — browse pruned tool calls in a foldable tree" },
-  { value: "now",     label: "now       — flush pending tool calls immediately (widget progress)" },
-  { value: "help",    label: "help      — show this help" },
+  { value: "tree", label: "tree      — browse pruned tool calls in a foldable tree" },
+  { value: "now", label: "now       — flush pending tool calls immediately (widget progress)" },
+  { value: "help", label: "help      — show this help" },
 ] as const;
 
 // ── Help text ───────────────────────────────────────────────────────────────
 
 const PRUNE_MODE_GUIDANCE: Record<ContextPruneConfig["pruneOn"], string> = {
-  "every-turn": "Debugging only. Prunes after every tool turn, which is easiest to inspect but churns provider prompt caches the most.",
-  "on-context-tag": "Good for milestone-based workflows. Flushes when context_tag is called; requires the pi-context extension for automatic triggering.",
-  "on-demand": "Maximum manual control. Nothing is pruned until you run /pruner now, so cache invalidation happens only when you choose.",
-  "agent-message": "Recommended default. Batches tool work and prunes once after the final text reply, giving the best balance of automation, context savings, and cache stability.",
-  "agentic-auto": "Useful for longer autonomous runs. Lets the model call context_prune, but depends on the model using it sparingly.",
+  "every-turn":
+    "Debugging only. Prunes after every tool turn, which is easiest to inspect but churns provider prompt caches the most.",
+  "on-context-tag":
+    "Good for milestone-based workflows. Flushes when context_tag is called; requires the pi-context extension for automatic triggering.",
+  "on-demand":
+    "Maximum manual control. Nothing is pruned until you run /pruner now, so cache invalidation happens only when you choose.",
+  "agent-message":
+    "Recommended default. Batches tool work and prunes once after the final text reply, giving the best balance of automation, context savings, and cache stability.",
+  "agentic-auto":
+    "Useful for longer autonomous runs. Lets the model call context_prune, but depends on the model using it sparingly.",
 };
 
 function pruneModeGuidance(mode: ContextPruneConfig["pruneOn"]): string {
-  return PRUNE_MODE_GUIDANCE[mode] ?? "Controls when summarized tool outputs replace raw tool results in future context.";
+  return (
+    PRUNE_MODE_GUIDANCE[mode] ??
+    "Controls when summarized tool outputs replace raw tool results in future context."
+  );
 }
 
 function pruneModeLabel(mode: ContextPruneConfig["pruneOn"]): string {
@@ -150,9 +164,11 @@ function summarizerThinkingDescription(level: ContextPruneConfig["summarizerThin
   return `Request ${level} thinking/reasoning for summarizer calls where supported.`;
 }
 
-function parseModelAndThinkingArg(
-  value: string,
-): { model: string; thinking?: ContextPruneConfig["summarizerThinking"]; error?: string } {
+function parseModelAndThinkingArg(value: string): {
+  model: string;
+  thinking?: ContextPruneConfig["summarizerThinking"];
+  error?: string;
+} {
   const separatorIndex = value.lastIndexOf(":");
   if (separatorIndex === -1) {
     return { model: value };
@@ -340,7 +356,10 @@ function startPrunerWidget(
           return rows.map((row) => {
             const count = `${row.toolCallCount} tool call${row.toolCallCount === 1 ? "" : "s"}`;
             if (row.status === "running") {
-              const frame = SPINNER_FRAMES[Math.floor(Date.now() / SPINNER_INTERVAL_MS) % SPINNER_FRAMES.length];
+              const frame =
+                SPINNER_FRAMES[
+                  Math.floor(Date.now() / SPINNER_INTERVAL_MS) % SPINNER_FRAMES.length
+                ];
               const chars =
                 row.receivedChars > 0
                   ? ` · ${formatCharProgress(row.receivedChars, row.rawChars)}`
@@ -409,7 +428,9 @@ function formatPruneDiagnostics(entries: PruneDiagnostic[]): string {
 
   const recent = entries.slice(-8).map((entry) => {
     const time = new Date(entry.timestamp).toLocaleTimeString();
-    const outcome = entry.skipReason ? `skipped:${entry.skipReason}` : entry.frontierOutcome ?? "flushed";
+    const outcome = entry.skipReason
+      ? `skipped:${entry.skipReason}`
+      : (entry.frontierOutcome ?? "flushed");
     return `  - ${time} ${outcome} · ${entry.prunedToolCallCount}/${entry.eligibleToolCallCount} tools · raw ${formatCompactCount(entry.rawCharCount)} chars (~${formatTokens(entry.estimatedRawTokens)} tok) → ${formatCompactCount(entry.replacementCharCount)} chars (~${formatTokens(entry.estimatedReplacementTokens)} tok)`;
   });
 
@@ -419,8 +440,18 @@ function formatPruneDiagnostics(entries: PruneDiagnostic[]): string {
 export function registerCommands(
   pi: ExtensionAPI,
   currentConfig: { value: ContextPruneConfig },
-  flushPending: (ctx: ExtensionCommandContext, options?: FlushOptions) => Promise<
-    | { ok: true; reason: "flushed" | "skipped-oversized"; batchCount: number; toolCallCount: number; rawCharCount: number; summaryCharCount: number }
+  flushPending: (
+    ctx: ExtensionCommandContext,
+    options?: FlushOptions,
+  ) => Promise<
+    | {
+        ok: true;
+        reason: "flushed" | "skipped-oversized";
+        batchCount: number;
+        toolCallCount: number;
+        rawCharCount: number;
+        summaryCharCount: number;
+      }
     | { ok: false; reason: string; error?: string }
   >,
   capturePendingBatches: (ctx: ExtensionCommandContext) => CapturedBatch[],
@@ -601,7 +632,9 @@ export function registerCommands(
               newConfig.summarizerThinking = newValue as ContextPruneConfig["summarizerThinking"];
               const thinkingItem = items.find((item) => item.id === "summarizerThinking");
               if (thinkingItem) {
-                thinkingItem.description = summarizerThinkingDescription(newConfig.summarizerThinking);
+                thinkingItem.description = summarizerThinkingDescription(
+                  newConfig.summarizerThinking,
+                );
               }
             } else if (id === "tokenEstimator") {
               newConfig.tokenEstimator = newValue as ContextPruneConfig["tokenEstimator"];
@@ -632,12 +665,16 @@ export function registerCommands(
                 batchingItem.description = batchingModeDescription(newConfig.batchingMode);
               }
             }
-            void applyConfigPatch({ [id]: newConfig[id as keyof ContextPruneConfig] } as Partial<ContextPruneConfig>)
+            void applyConfigPatch({
+              [id]: newConfig[id as keyof ContextPruneConfig],
+            } as Partial<ContextPruneConfig>)
               .then(() => settingsList?.invalidate())
-              .catch((err) => ctx.ui.notify(
-                `Failed to save pruner setting: ${err instanceof Error ? err.message : String(err)}`,
-                "error",
-              ));
+              .catch((err) =>
+                ctx.ui.notify(
+                  `Failed to save pruner setting: ${err instanceof Error ? err.message : String(err)}`,
+                  "error",
+                ),
+              );
           };
 
           settingsList = new SettingsList(
@@ -689,36 +726,38 @@ export function registerCommands(
           const projectFields = Object.keys(state.project ?? {});
           const overrideSuffix = projectFields.length === 1 ? "" : "s";
           const projectLine = state.projectPath
-            ? `\n  project:  ${state.projectPath}`
-              + `\n  scope:    project config active (${projectFields.length} override${overrideSuffix})`
+            ? `\n  project:  ${state.projectPath}` +
+              `\n  scope:    project config active (${projectFields.length} override${overrideSuffix})`
             : "\n  project:  none\n  scope:    global config";
           const projectPreserveCount = state.project?.preserveToolResults?.length ?? 0;
           const projectPreservePart = state.projectPath ? `, ${projectPreserveCount} project` : "";
           const preserveLine =
-            `\n  preserve rules: ${cfg.preserveToolResults.length} effective `
-            + `(${state.global.preserveToolResults.length} global${projectPreservePart})`;
-          const statsLine = s.callCount > 0
-            ? `\n  --- summarizer ---\n  calls:       ${s.callCount}\n  input:       ${formatTokens(s.totalInputTokens)} tokens\n  output:      ${formatTokens(s.totalOutputTokens)} tokens\n  cost:        ${formatCost(s.totalCost)}`
-            : "\n  (no summarizer calls yet)";
-          const minimumPruneLine = cfg.minPruneToolCalls > 0
-            ? `${formatTokens(cfg.minPruneRawTokens)} pruneable raw tokens or ${cfg.minPruneToolCalls} tool calls`
-            : `${formatTokens(cfg.minPruneRawTokens)} pruneable raw tokens; tool-call threshold disabled`;
+            `\n  preserve rules: ${cfg.preserveToolResults.length} effective ` +
+            `(${state.global.preserveToolResults.length} global${projectPreservePart})`;
+          const statsLine =
+            s.callCount > 0
+              ? `\n  --- summarizer ---\n  calls:       ${s.callCount}\n  input:       ${formatTokens(s.totalInputTokens)} tokens\n  output:      ${formatTokens(s.totalOutputTokens)} tokens\n  cost:        ${formatCost(s.totalCost)}`
+              : "\n  (no summarizer calls yet)";
+          const minimumPruneLine =
+            cfg.minPruneToolCalls > 0
+              ? `${formatTokens(cfg.minPruneRawTokens)} pruneable raw tokens or ${cfg.minPruneToolCalls} tool calls`
+              : `${formatTokens(cfg.minPruneRawTokens)} pruneable raw tokens; tool-call threshold disabled`;
           ctx.ui.notify(
-            `pruner status:\n  global:   ${SETTINGS_PATH}${projectLine}`
-              + `\n  merge:    project overrides global per field`
-              + `\n  enabled:  ${cfg.enabled}`
-              + `\n  strategy: ${pruneStrategyLabel(cfg.pruneStrategy)} (${cfg.pruneStrategy})`
-              + `\n  model:    ${cfg.summarizerModel}`
-              + `\n  thinking: ${summarizerThinkingLabel(cfg.summarizerThinking)} (${cfg.summarizerThinking})`
-              + `\n  trigger:  ${mode}`
-              + `\n  batching: ${batchingModeLabel(cfg.batchingMode)} (${cfg.batchingMode})`
-              + `\n  status:   ${cfg.showPruneStatusLine ? "on" : "off"}`
-              + `\n  remind:   ${cfg.remindUnprunedCount ? "on" : "off"} (agentic-auto only)`
-              + `\n  protected context tail: ${formatTokens(cfg.protectedTailTokens)} estimated tokens`
-              + `\n  minimum prune: ${minimumPruneLine}`
-              + `\n  token estimator: ${tokenEstimatorLabel(cfg.tokenEstimator)} (${cfg.tokenEstimator})`
-              + `\n  tokenizer encoding: ${tokenizerEncodingLabel(cfg.tokenizerEncoding)}`
-              + `\n  chars per token: ${cfg.charsPerToken}${preserveLine}${statsLine}`,
+            `pruner status:\n  global:   ${SETTINGS_PATH}${projectLine}` +
+              `\n  merge:    project overrides global per field` +
+              `\n  enabled:  ${cfg.enabled}` +
+              `\n  strategy: ${pruneStrategyLabel(cfg.pruneStrategy)} (${cfg.pruneStrategy})` +
+              `\n  model:    ${cfg.summarizerModel}` +
+              `\n  thinking: ${summarizerThinkingLabel(cfg.summarizerThinking)} (${cfg.summarizerThinking})` +
+              `\n  trigger:  ${mode}` +
+              `\n  batching: ${batchingModeLabel(cfg.batchingMode)} (${cfg.batchingMode})` +
+              `\n  status:   ${cfg.showPruneStatusLine ? "on" : "off"}` +
+              `\n  remind:   ${cfg.remindUnprunedCount ? "on" : "off"} (agentic-auto only)` +
+              `\n  protected context tail: ${formatTokens(cfg.protectedTailTokens)} estimated tokens` +
+              `\n  minimum prune: ${minimumPruneLine}` +
+              `\n  token estimator: ${tokenEstimatorLabel(cfg.tokenEstimator)} (${cfg.tokenEstimator})` +
+              `\n  tokenizer encoding: ${tokenizerEncodingLabel(cfg.tokenizerEncoding)}` +
+              `\n  chars per token: ${cfg.charsPerToken}${preserveLine}${statsLine}`,
           );
           break;
         }
@@ -796,7 +835,9 @@ export function registerCommands(
             return;
           }
           if (SUMMARIZER_THINKING_LEVELS.some((level) => level.value === thinkingArg)) {
-            await applyConfigPatch({ summarizerThinking: thinkingArg as ContextPruneConfig["summarizerThinking"] });
+            await applyConfigPatch({
+              summarizerThinking: thinkingArg as ContextPruneConfig["summarizerThinking"],
+            });
           } else {
             ctx.ui.notify(
               `Invalid summarizer thinking level: ${thinkingArg}. Use one of: ${SUMMARIZER_THINKING_LEVELS.map((level) => level.value).join(", ")}.`,
@@ -813,7 +854,10 @@ export function registerCommands(
           const modeArg = subArgs[0];
           if (!modeArg) {
             const options = PRUNE_ON_MODES.map((m) => `${m.value} — ${m.label}`);
-            const choice = await ctx.ui.select("pruner — choose when to trigger summarization", options);
+            const choice = await ctx.ui.select(
+              "pruner — choose when to trigger summarization",
+              options,
+            );
             if (!choice) return;
             // Extract the value (first word) from "every-turn — Every turn"
             const chosenValue = choice.split(/\s+/)[0] as ContextPruneConfig["pruneOn"];
@@ -848,9 +892,13 @@ export function registerCommands(
               );
               return;
             }
-            await applyConfigPatch({ batchingMode: batchArg as ContextPruneConfig["batchingMode"] });
+            await applyConfigPatch({
+              batchingMode: batchArg as ContextPruneConfig["batchingMode"],
+            });
           }
-          ctx.ui.notify(`Batching mode set to: ${batchingModeLabel(currentConfig.value.batchingMode)}`);
+          ctx.ui.notify(
+            `Batching mode set to: ${batchingModeLabel(currentConfig.value.batchingMode)}`,
+          );
           break;
         }
 
@@ -895,9 +943,10 @@ export function registerCommands(
 
           if (!result.ok) {
             const suffix = "error" in result && result.error ? ` (${result.error})` : "";
-            const hint = result.reason === "below-threshold"
-              ? " — use /pruner now --force to bypass the minimum guard"
-              : "";
+            const hint =
+              result.reason === "below-threshold"
+                ? " — use /pruner now --force to bypass the minimum guard"
+                : "";
             ctx.ui.notify(
               `pruner: nothing flushed — ${result.reason}${suffix}${hint}`,
               result.reason === "empty" || result.reason === "below-threshold" ? "info" : "warning",
@@ -908,14 +957,14 @@ export function registerCommands(
           if (result.reason === "skipped-oversized") {
             ctx.ui.notify(
               `pruner: skipped pruning ${result.toolCallCount} tool call${result.toolCallCount === 1 ? "" : "s"} — summary was ${result.summaryCharCount} chars vs ${result.rawCharCount} raw chars; frontier advanced past this range`,
-              "warning"
+              "warning",
             );
             break;
           }
 
           ctx.ui.notify(
             `pruner: pruned ${result.toolCallCount} tool call${result.toolCallCount === 1 ? "" : "s"} from ${result.batchCount} batch${result.batchCount === 1 ? "" : "es"} — summary ${result.summaryCharCount} chars vs ${result.rawCharCount} raw chars`,
-            "info"
+            "info",
           );
           break;
         }
@@ -927,9 +976,7 @@ export function registerCommands(
 
         // ── Unknown subcommand ──
         default:
-          ctx.ui.notify(
-            `Unknown subcommand: "${subcommand}". Run /pruner help for usage.`,
-          );
+          ctx.ui.notify(`Unknown subcommand: "${subcommand}". Run /pruner help for usage.`);
       }
     },
   });
@@ -944,7 +991,10 @@ export function registerCommands(
     };
     const turnIndex = details?.turnIndex ?? "?";
     const toolCount = normalizeSummaryToolCallRefs(details).length;
-    const header = theme.fg("accent", `[pruner] Turn ${turnIndex} summary (${toolCount} tool${toolCount === 1 ? "" : "s"})`);
+    const header = theme.fg(
+      "accent",
+      `[pruner] Turn ${turnIndex} summary (${toolCount} tool${toolCount === 1 ? "" : "s"})`,
+    );
     if (expanded) {
       return new Text(header + "\n" + message.content, 0, 0);
     }

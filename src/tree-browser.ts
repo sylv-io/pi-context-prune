@@ -1,5 +1,11 @@
 import type { Component } from "@mariozechner/pi-tui";
-import { Markdown, getKeybindings, matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import {
+  Markdown,
+  getKeybindings,
+  matchesKey,
+  truncateToWidth,
+  visibleWidth,
+} from "@mariozechner/pi-tui";
 import { getMarkdownTheme } from "@mariozechner/pi-coding-agent";
 import type { Theme } from "@mariozechner/pi-coding-agent";
 import type { ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
@@ -54,12 +60,7 @@ function isCtrlO(data: string): boolean {
 
 // ── Box drawing ─────────────────────────────────────────────────────────────
 
-function boxLines(
-  lines: string[],
-  width: number,
-  title: string,
-  theme: Theme,
-): string[] {
+function boxLines(lines: string[], width: number, title: string, theme: Theme): string[] {
   const innerWidth = Math.max(0, width - 2);
   const result: string[] = [];
 
@@ -90,10 +91,7 @@ function boxLines(
  * Each node carries a `charCount` so the UI can show how many characters the
  * summary replaced (making it obvious whether pruning is saving space).
  */
-export function buildPruneTree(
-  ctx: ExtensionCommandContext,
-  indexer: ToolCallIndexer,
-): TreeNode[] {
+export function buildPruneTree(ctx: ExtensionCommandContext, indexer: ToolCallIndexer): TreeNode[] {
   const branch = ctx.sessionManager.getBranch();
   const roots: TreeNode[] = [];
   let summaryIndex = 0;
@@ -103,19 +101,19 @@ export function buildPruneTree(
     const customEntry = entry as any;
     if (customEntry.customType !== CUSTOM_TYPE_SUMMARY) continue;
 
-    const details = customEntry.details as {
-      toolCallRefs?: { shortId: string; toolCallId: string }[];
-      toolCallIds?: string[];
-      toolNames: string[];
-      turnIndex: number;
-      timestamp: number;
-    } | undefined;
+    const details = customEntry.details as
+      | {
+          toolCallRefs?: { shortId: string; toolCallId: string }[];
+          toolCallIds?: string[];
+          toolNames: string[];
+          turnIndex: number;
+          timestamp: number;
+        }
+      | undefined;
 
     const toolCallRefs = normalizeSummaryToolCallRefs(details);
     const turnIndex = details?.turnIndex ?? "?";
-    const timestamp = details?.timestamp
-      ? new Date(details.timestamp).toLocaleString()
-      : "";
+    const timestamp = details?.timestamp ? new Date(details.timestamp).toLocaleString() : "";
 
     const children: TreeNode[] = [];
     for (const ref of toolCallRefs) {
@@ -124,13 +122,9 @@ export function buildPruneTree(
       children.push(toolCallNode(record, 1));
     }
 
-    const summaryText =
-      typeof customEntry.content === "string" ? customEntry.content : "";
+    const summaryText = typeof customEntry.content === "string" ? customEntry.content : "";
     const summaryChars = summaryText.length;
-    const totalOriginalChars = children.reduce(
-      (sum, c) => sum + (c.charCount ?? 0),
-      0,
-    );
+    const totalOriginalChars = children.reduce((sum, c) => sum + (c.charCount ?? 0), 0);
 
     const header = `[pruner] Turn ${turnIndex} summary (${children.length} tool${children.length === 1 ? "" : "s"} · ${formatChars(summaryChars)} chars · original ${formatChars(totalOriginalChars)})`;
     const label = timestamp ? `${header} · ${timestamp}` : header;
@@ -225,14 +219,10 @@ export class TreeBrowser implements Component {
 
     if (kb.matches(data, "tui.select.up")) {
       this.selectedIndex =
-        this.selectedIndex === 0
-          ? this.flatRows.length - 1
-          : this.selectedIndex - 1;
+        this.selectedIndex === 0 ? this.flatRows.length - 1 : this.selectedIndex - 1;
     } else if (kb.matches(data, "tui.select.down")) {
       this.selectedIndex =
-        this.selectedIndex === this.flatRows.length - 1
-          ? 0
-          : this.selectedIndex + 1;
+        this.selectedIndex === this.flatRows.length - 1 ? 0 : this.selectedIndex + 1;
     } else if (kb.matches(data, "tui.select.confirm") || data === " ") {
       const row = this.flatRows[this.selectedIndex];
       if (row && !row.node.isLeaf) {
@@ -325,7 +315,10 @@ export class TreeBrowser implements Component {
 
     const canvasHeight = Math.max(baseLines.length, overlayLines.length + 2);
     const blankLine = " ".repeat(width);
-    const composed = Array.from({ length: canvasHeight }, (_, index) => baseLines[index] ?? blankLine);
+    const composed = Array.from(
+      { length: canvasHeight },
+      (_, index) => baseLines[index] ?? blankLine,
+    );
     const startRow = Math.max(0, Math.floor((canvasHeight - overlayLines.length) / 2));
     const leftPad = Math.max(0, Math.floor((width - overlayWidth) / 2));
     const rightPad = Math.max(0, width - leftPad - overlayWidth);
@@ -337,17 +330,9 @@ export class TreeBrowser implements Component {
     return composed;
   }
 
-  private renderRow(
-    node: TreeNode,
-    width: number,
-    isSelected: boolean,
-  ): string {
+  private renderRow(node: TreeNode, width: number, isSelected: boolean): string {
     const indent = "  ".repeat(node.depth);
-    const prefix = node.isLeaf
-      ? "  "
-      : node.expanded
-        ? "▾ "
-        : "▸ ";
+    const prefix = node.isLeaf ? "  " : node.expanded ? "▾ " : "▸ ";
 
     let text: string;
     if (node.isLeaf) {

@@ -46,7 +46,7 @@ export function resolveModel(config: ContextPruneConfig, ctx: ExtensionContext):
   if (slashIndex === -1) {
     ctx.ui.notify(
       `pruner: invalid summarizerModel "${config.summarizerModel}", expected "provider/model-id". Falling back to default model.`,
-      "warning"
+      "warning",
     );
     return ctx.model;
   }
@@ -58,7 +58,7 @@ export function resolveModel(config: ContextPruneConfig, ctx: ExtensionContext):
   if (!found) {
     ctx.ui.notify(
       `pruner: model "${config.summarizerModel}" not found in registry. Falling back to default model.`,
-      "warning"
+      "warning",
     );
     return ctx.model;
   }
@@ -80,7 +80,7 @@ export async function summarizeBatch(
   batch: CapturedBatch,
   config: ContextPruneConfig,
   ctx: ExtensionContext,
-  options: SummarizeBatchOptions = {}
+  options: SummarizeBatchOptions = {},
 ): Promise<SummarizeResult | null> {
   // Fast-fail if already aborted before we even start.
   if (options.signal?.aborted) throw new Error("summarizeBatch: aborted before start");
@@ -112,7 +112,12 @@ export async function summarizeBatch(
           },
         ],
       },
-      { apiKey: auth.apiKey, headers: auth.headers, signal: options.signal, ...summarizerThinkingOptions(config) }
+      {
+        apiKey: auth.apiKey,
+        headers: auth.headers,
+        signal: options.signal,
+        ...summarizerThinkingOptions(config),
+      },
     );
 
     let lastReportedChars = -1;
@@ -162,10 +167,7 @@ export async function summarizeBatch(
     // Propagate abort errors upward so flushPending can check signal.aborted
     // and return { ok: false, reason: "aborted" } without showing a UI error.
     if (options.signal?.aborted) throw err;
-    ctx.ui.notify(
-      `pruner: summarization failed: ${err.message}`,
-      "error"
-    );
+    ctx.ui.notify(`pruner: summarization failed: ${err.message}`, "error");
     return null;
   }
 }
@@ -187,7 +189,7 @@ export async function summarizeBatches(
   batches: CapturedBatch[],
   config: ContextPruneConfig,
   ctx: ExtensionContext,
-  options: SummarizeBatchesOptions = {}
+  options: SummarizeBatchesOptions = {},
 ): Promise<Array<SummarizeResult | null>> {
   if (batches.length === 0) return [];
   // Single batch — delegate to the single-batch path (no extra overhead)
@@ -210,7 +212,7 @@ export async function summarizeBatches(
         onTextProgress: (receivedChars) => {
           options.onBatchTextProgress?.(index, batches.length, batch, receivedChars);
         },
-      })
-    )
+      }),
+    ),
   );
 }

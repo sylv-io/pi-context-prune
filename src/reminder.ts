@@ -52,7 +52,11 @@ export function countUnprunedToolCalls(
       const toolName = block.toolName ?? block.name;
       const args = block.args ?? block.input ?? {};
       if (!id || protectedToolCallIds.has(id)) continue;
-      if (typeof toolName === "string" && shouldPreserveToolResult({ toolName, args }, preserveToolResults)) continue;
+      if (
+        typeof toolName === "string" &&
+        shouldPreserveToolResult({ toolName, args }, preserveToolResults)
+      )
+        continue;
       if (!indexer.isSummarized(id)) count++;
     }
   }
@@ -77,7 +81,11 @@ export function buildReminderText(count: number, protectedTailActive = false): s
  * `content` array, both of which are cloned so we do not mutate Pi's deep-
  * copied event payload in surprising ways.
  */
-export function annotateWithUnprunedCount(messages: any[], count: number, protectedTailActive = false): any[] {
+export function annotateWithUnprunedCount(
+  messages: any[],
+  count: number,
+  protectedTailActive = false,
+): any[] {
   if (count <= 0) return messages;
   if (messages.length === 0) return messages;
 

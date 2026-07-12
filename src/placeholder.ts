@@ -32,7 +32,11 @@ function toolHint(toolName: string): string {
   return "";
 }
 
-export function renderPlaceholderSummary(batch: CapturedBatch, refs: SummaryToolCallRef[], config: ContextPruneConfig): string {
+export function renderPlaceholderSummary(
+  batch: CapturedBatch,
+  refs: SummaryToolCallRef[],
+  config: ContextPruneConfig,
+): string {
   const refList = refs.map((ref) => `\`${ref.shortId}\``).join(", ");
   const lines = [
     `**Pruned tool refs**: ${refList}`,

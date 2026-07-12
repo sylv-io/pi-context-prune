@@ -54,7 +54,13 @@ export class MultiBatchLoaderOverlay extends Container {
   }
 
   private runningLabel(index: number, receivedChars = 0): string {
-    return pruneProgressText(this.batches[index], index, this.batches.length, receivedChars, "running");
+    return pruneProgressText(
+      this.batches[index],
+      index,
+      this.batches.length,
+      receivedChars,
+      "running",
+    );
   }
 
   /** Explicitly mark a row as running. */
@@ -73,7 +79,13 @@ export class MultiBatchLoaderOverlay extends Container {
   markDone(index: number): void {
     this.loaders[index].stop();
     this.loaders[index].setMessage(
-      pruneProgressText(this.batches[index], index, this.batches.length, this.latestReceivedChars[index] ?? 0, "done"),
+      pruneProgressText(
+        this.batches[index],
+        index,
+        this.batches.length,
+        this.latestReceivedChars[index] ?? 0,
+        "done",
+      ),
     );
   }
 
@@ -81,7 +93,13 @@ export class MultiBatchLoaderOverlay extends Container {
   markSkipped(index: number): void {
     this.loaders[index].stop();
     this.loaders[index].setMessage(
-      pruneProgressText(this.batches[index], index, this.batches.length, this.latestReceivedChars[index] ?? 0, "skipped"),
+      pruneProgressText(
+        this.batches[index],
+        index,
+        this.batches.length,
+        this.latestReceivedChars[index] ?? 0,
+        "skipped",
+      ),
     );
   }
 

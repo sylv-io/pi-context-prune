@@ -81,10 +81,7 @@ export class StatsAccumulator {
     this.reset();
     const branch = ctx.sessionManager.getBranch();
     for (const entry of branch) {
-      if (
-        entry.type === "custom" &&
-        (entry as any).customType === CUSTOM_TYPE_STATS
-      ) {
+      if (entry.type === "custom" && (entry as any).customType === CUSTOM_TYPE_STATS) {
         const data = (entry as any).data as SummarizerStats;
         if (data) {
           this.fromJSON(data);

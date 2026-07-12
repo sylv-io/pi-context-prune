@@ -1,8 +1,23 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, dirname, resolve } from "node:path";
 import { homedir } from "node:os";
-import type { ContextPruneConfig, PreserveToolResultRule, PruneOn, PruneStrategy, SummarizerThinking, TokenEstimator, TokenizerEncoding } from "./types.js";
-import { DEFAULT_CONFIG, PRUNE_ON_MODES, PRUNE_STRATEGY_MODES, SUMMARIZER_THINKING_LEVELS, TOKEN_ESTIMATOR_MODES, TOKENIZER_ENCODINGS } from "./types.js";
+import type {
+  ContextPruneConfig,
+  PreserveToolResultRule,
+  PruneOn,
+  PruneStrategy,
+  SummarizerThinking,
+  TokenEstimator,
+  TokenizerEncoding,
+} from "./types.js";
+import {
+  DEFAULT_CONFIG,
+  PRUNE_ON_MODES,
+  PRUNE_STRATEGY_MODES,
+  SUMMARIZER_THINKING_LEVELS,
+  TOKEN_ESTIMATOR_MODES,
+  TOKENIZER_ENCODINGS,
+} from "./types.js";
 
 /** Path to the extension's own settings file, independent of any project. */
 export const SETTINGS_PATH = join(homedir(), ".pi", "agent", "context-prune", "settings.json");
@@ -20,7 +35,9 @@ function isPruneOn(value: unknown): value is PruneOn {
 }
 
 function isSummarizerThinking(value: unknown): value is SummarizerThinking {
-  return typeof value === "string" && SUMMARIZER_THINKING_LEVELS.some((level) => level.value === value);
+  return (
+    typeof value === "string" && SUMMARIZER_THINKING_LEVELS.some((level) => level.value === value)
+  );
 }
 
 function isPruneStrategy(value: unknown): value is PruneStrategy {
@@ -32,7 +49,9 @@ function isTokenEstimator(value: unknown): value is TokenEstimator {
 }
 
 function isTokenizerEncoding(value: unknown): value is TokenizerEncoding {
-  return typeof value === "string" && TOKENIZER_ENCODINGS.some((encoding) => encoding.value === value);
+  return (
+    typeof value === "string" && TOKENIZER_ENCODINGS.some((encoding) => encoding.value === value)
+  );
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -40,7 +59,10 @@ function isNonEmptyString(value: unknown): value is string {
 }
 
 function isStringOrStringArray(value: unknown): value is string | string[] {
-  return isNonEmptyString(value) || (Array.isArray(value) && value.length > 0 && value.every(isNonEmptyString));
+  return (
+    isNonEmptyString(value) ||
+    (Array.isArray(value) && value.length > 0 && value.every(isNonEmptyString))
+  );
 }
 
 function isPreserveToolResultRule(value: unknown): value is PreserveToolResultRule {
@@ -75,9 +97,10 @@ function normalizePositiveNumber(value: unknown, fallback: number): number {
 
 /** Normalizes a partial project config patch without filling missing fields. */
 export function normalizeConfigPatch(existing: unknown): Partial<ContextPruneConfig> {
-  const input = existing && typeof existing === "object" && !Array.isArray(existing)
-    ? existing as Record<string, unknown>
-    : {};
+  const input =
+    existing && typeof existing === "object" && !Array.isArray(existing)
+      ? (existing as Record<string, unknown>)
+      : {};
   const patch: Partial<ContextPruneConfig> = {};
 
   if ("enabled" in input && typeof input.enabled === "boolean") patch.enabled = input.enabled;
@@ -91,11 +114,15 @@ export function normalizeConfigPatch(existing: unknown): Partial<ContextPruneCon
     patch.summarizerThinking = input.summarizerThinking;
   }
   if ("pruneOn" in input && isPruneOn(input.pruneOn)) patch.pruneOn = input.pruneOn;
-  if ("pruneStrategy" in input && isPruneStrategy(input.pruneStrategy)) patch.pruneStrategy = input.pruneStrategy;
+  if ("pruneStrategy" in input && isPruneStrategy(input.pruneStrategy))
+    patch.pruneStrategy = input.pruneStrategy;
   if ("remindUnprunedCount" in input && typeof input.remindUnprunedCount === "boolean") {
     patch.remindUnprunedCount = input.remindUnprunedCount;
   }
-  if ("batchingMode" in input && (input.batchingMode === "turn" || input.batchingMode === "agent-message")) {
+  if (
+    "batchingMode" in input &&
+    (input.batchingMode === "turn" || input.batchingMode === "agent-message")
+  ) {
     patch.batchingMode = input.batchingMode;
   }
   if (
@@ -106,7 +133,8 @@ export function normalizeConfigPatch(existing: unknown): Partial<ContextPruneCon
   ) {
     patch.protectedTailTokens = Math.floor(input.protectedTailTokens);
   }
-  if ("tokenEstimator" in input && isTokenEstimator(input.tokenEstimator)) patch.tokenEstimator = input.tokenEstimator;
+  if ("tokenEstimator" in input && isTokenEstimator(input.tokenEstimator))
+    patch.tokenEstimator = input.tokenEstimator;
   if ("tokenizerEncoding" in input && isTokenizerEncoding(input.tokenizerEncoding)) {
     patch.tokenizerEncoding = input.tokenizerEncoding;
   }
@@ -143,7 +171,8 @@ export function normalizeConfigPatch(existing: unknown): Partial<ContextPruneCon
 
 /** Normalizes parsed config data. */
 export function normalizeConfig(existing: unknown): ContextPruneConfig {
-  const input = existing && typeof existing === "object" && !Array.isArray(existing) ? existing : {};
+  const input =
+    existing && typeof existing === "object" && !Array.isArray(existing) ? existing : {};
   const merged = { ...DEFAULT_CONFIG, ...(input as Record<string, unknown>) };
   return {
     ...merged,
@@ -152,9 +181,13 @@ export function normalizeConfig(existing: unknown): ContextPruneConfig {
       typeof merged.showPruneStatusLine === "boolean"
         ? merged.showPruneStatusLine
         : DEFAULT_CONFIG.showPruneStatusLine,
-    summarizerModel: isNonEmptyString(merged.summarizerModel) ? merged.summarizerModel : DEFAULT_CONFIG.summarizerModel,
+    summarizerModel: isNonEmptyString(merged.summarizerModel)
+      ? merged.summarizerModel
+      : DEFAULT_CONFIG.summarizerModel,
     pruneOn: isPruneOn(merged.pruneOn) ? merged.pruneOn : DEFAULT_CONFIG.pruneOn,
-    pruneStrategy: isPruneStrategy(merged.pruneStrategy) ? merged.pruneStrategy : DEFAULT_CONFIG.pruneStrategy,
+    pruneStrategy: isPruneStrategy(merged.pruneStrategy)
+      ? merged.pruneStrategy
+      : DEFAULT_CONFIG.pruneStrategy,
     summarizerThinking: isSummarizerThinking(merged.summarizerThinking)
       ? merged.summarizerThinking
       : DEFAULT_CONFIG.summarizerThinking,
@@ -166,19 +199,33 @@ export function normalizeConfig(existing: unknown): ContextPruneConfig {
       merged.batchingMode === "turn" || merged.batchingMode === "agent-message"
         ? merged.batchingMode
         : DEFAULT_CONFIG.batchingMode,
-    protectedTailTokens: normalizeNonNegativeNumber(merged.protectedTailTokens, DEFAULT_CONFIG.protectedTailTokens),
-    tokenEstimator: isTokenEstimator(merged.tokenEstimator) ? merged.tokenEstimator : DEFAULT_CONFIG.tokenEstimator,
+    protectedTailTokens: normalizeNonNegativeNumber(
+      merged.protectedTailTokens,
+      DEFAULT_CONFIG.protectedTailTokens,
+    ),
+    tokenEstimator: isTokenEstimator(merged.tokenEstimator)
+      ? merged.tokenEstimator
+      : DEFAULT_CONFIG.tokenEstimator,
     tokenizerEncoding: isTokenizerEncoding(merged.tokenizerEncoding)
       ? merged.tokenizerEncoding
       : DEFAULT_CONFIG.tokenizerEncoding,
     charsPerToken: normalizePositiveNumber(merged.charsPerToken, DEFAULT_CONFIG.charsPerToken),
-    minPruneRawTokens: normalizeNonNegativeNumber(merged.minPruneRawTokens, DEFAULT_CONFIG.minPruneRawTokens),
-    minPruneToolCalls: normalizeNonNegativeNumber(merged.minPruneToolCalls, DEFAULT_CONFIG.minPruneToolCalls),
+    minPruneRawTokens: normalizeNonNegativeNumber(
+      merged.minPruneRawTokens,
+      DEFAULT_CONFIG.minPruneRawTokens,
+    ),
+    minPruneToolCalls: normalizeNonNegativeNumber(
+      merged.minPruneToolCalls,
+      DEFAULT_CONFIG.minPruneToolCalls,
+    ),
     preserveToolResults: normalizePreserveToolResults(merged.preserveToolResults),
   };
 }
 
-export function mergeConfig(global: ContextPruneConfig, project?: Partial<ContextPruneConfig>): ContextPruneConfig {
+export function mergeConfig(
+  global: ContextPruneConfig,
+  project?: Partial<ContextPruneConfig>,
+): ContextPruneConfig {
   return normalizeConfig({ ...global, ...(project ?? {}) });
 }
 
@@ -241,7 +288,12 @@ export async function loadConfigState(cwd: string, projectTrusted: boolean): Pro
 
   const project = await loadProjectConfig(cwd);
   if (!project) return { global, effective: mergeConfig(global) };
-  return { global, project: project.config, effective: mergeConfig(global, project.config), projectPath: project.path };
+  return {
+    global,
+    project: project.config,
+    effective: mergeConfig(global, project.config),
+    projectPath: project.path,
+  };
 }
 
 /** Writes the config to ~/.pi/agent/context-prune/settings.json. */
@@ -251,7 +303,10 @@ export async function saveConfig(config: ContextPruneConfig): Promise<void> {
 }
 
 /** Writes project config to <project>/.pi/context-prune/settings.json. */
-export async function saveProjectConfig(path: string, config: Partial<ContextPruneConfig>): Promise<void> {
+export async function saveProjectConfig(
+  path: string,
+  config: Partial<ContextPruneConfig>,
+): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(configPatchForSave(config), null, 2)}\n`);
 }

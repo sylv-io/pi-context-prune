@@ -59,7 +59,10 @@ const matchesAnyPattern = (value: unknown, patterns: string | string[]): boolean
   return list.some((pattern) => matchesPattern(value, pattern));
 };
 
-const matchesToolName = (toolName: string, ruleToolName: PreserveToolResultRule["toolName"]): boolean => {
+const matchesToolName = (
+  toolName: string,
+  ruleToolName: PreserveToolResultRule["toolName"],
+): boolean => {
   if (ruleToolName === undefined) return true;
   const names = Array.isArray(ruleToolName) ? ruleToolName : [ruleToolName];
   return names.includes(toolName);
@@ -74,7 +77,9 @@ const matchesArgs = (
 };
 
 const hasConstraint = (rule: PreserveToolResultRule): boolean => {
-  return rule.toolName !== undefined || (rule.args !== undefined && Object.keys(rule.args).length > 0);
+  return (
+    rule.toolName !== undefined || (rule.args !== undefined && Object.keys(rule.args).length > 0)
+  );
 };
 
 export function shouldPreserveToolResult(
@@ -82,6 +87,9 @@ export function shouldPreserveToolResult(
   rules: PreserveToolResultRule[] = [],
 ): boolean {
   return rules.some(
-    (rule) => hasConstraint(rule) && matchesToolName(toolCall.toolName, rule.toolName) && matchesArgs(toolCall.args, rule.args),
+    (rule) =>
+      hasConstraint(rule) &&
+      matchesToolName(toolCall.toolName, rule.toolName) &&
+      matchesArgs(toolCall.args, rule.args),
   );
 }

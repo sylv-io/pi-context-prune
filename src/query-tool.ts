@@ -14,9 +14,12 @@ export function registerQueryTool(pi: ExtensionAPI, indexer: ToolCallIndexer): v
       "When you need the full output of a tool call that was summarized and pruned from context, use context_tree_query with the short refs listed in the relevant pruner-summary message.",
     ],
     parameters: Type.Object({
-      toolCallIds: Type.Array(Type.String({ description: "One or more short refs or tool call IDs to retrieve" }), {
-        description: "List of short refs or toolCallIds to look up",
-      }),
+      toolCallIds: Type.Array(
+        Type.String({ description: "One or more short refs or tool call IDs to retrieve" }),
+        {
+          description: "List of short refs or toolCallIds to look up",
+        },
+      ),
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {

@@ -37,7 +37,9 @@ export function normalizeSummaryToolCallRefs(details: unknown): SummaryToolCallR
   }
 
   if (Array.isArray(raw.toolCallIds)) {
-    return raw.toolCallIds.filter((id): id is string => typeof id === "string").map((id) => ({ shortId: id, toolCallId: id }));
+    return raw.toolCallIds
+      .filter((id): id is string => typeof id === "string")
+      .map((id) => ({ shortId: id, toolCallId: id }));
   }
 
   return [];

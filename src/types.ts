@@ -107,7 +107,12 @@ What happens when you call context_prune:
  * - "agentic-auto"   : the LLM agent decides when to prune by calling the context_prune tool;
  *                       the tool is only active in this mode and guided by prompt instructions
  */
-export type PruneOn = "every-turn" | "on-context-tag" | "on-demand" | "agent-message" | "agentic-auto";
+export type PruneOn =
+  | "every-turn"
+  | "on-context-tag"
+  | "on-demand"
+  | "agent-message"
+  | "agentic-auto";
 
 /**
  * Granularity of pruning batches.
@@ -121,7 +126,14 @@ export type TokenEstimator = "auto" | "tiktoken" | "chars";
 export type TokenizerEncoding = "o200k_base" | "cl100k_base";
 
 /** Thinking/reasoning level requested for summarizer LLM calls. */
-export type SummarizerThinking = "default" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type SummarizerThinking =
+  | "default"
+  | "off"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh";
 
 /** Choices for the summarizer thinking setting (used by commands and settings overlay) */
 export const SUMMARIZER_THINKING_LEVELS: { value: SummarizerThinking; label: string }[] = [

@@ -39,10 +39,7 @@ export class PruneFrontierTracker {
     this.reset();
     const branch = ctx.sessionManager.getBranch();
     for (const entry of branch) {
-      if (
-        entry.type === "custom" &&
-        (entry as any).customType === CUSTOM_TYPE_FRONTIER
-      ) {
+      if (entry.type === "custom" && (entry as any).customType === CUSTOM_TYPE_FRONTIER) {
         const data = (entry as any).data as PruneFrontier;
         if (data) {
           this.fromJSON(data);

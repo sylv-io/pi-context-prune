@@ -8,7 +8,11 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { AgentToolUpdateCallback, ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type {
+  AgentToolUpdateCallback,
+  ExtensionAPI,
+  ExtensionContext,
+} from "@mariozechner/pi-coding-agent";
 import type { CapturedBatch, FlushOptions } from "./types.js";
 import { CONTEXT_PRUNE_TOOL_NAME } from "./types.js";
 import { pruneProgressText } from "./progress-text.js";
@@ -21,8 +25,22 @@ import { pruneProgressText } from "./progress-text.js";
  * @param flushPending  Shared flush function that summarizes + indexes pending batches
  */
 type FlushResult =
-  | { ok: true; reason: "flushed"; batchCount: number; toolCallCount: number; rawCharCount: number; summaryCharCount: number }
-  | { ok: true; reason: "skipped-oversized"; batchCount: number; toolCallCount: number; rawCharCount: number; summaryCharCount: number }
+  | {
+      ok: true;
+      reason: "flushed";
+      batchCount: number;
+      toolCallCount: number;
+      rawCharCount: number;
+      summaryCharCount: number;
+    }
+  | {
+      ok: true;
+      reason: "skipped-oversized";
+      batchCount: number;
+      toolCallCount: number;
+      rawCharCount: number;
+      summaryCharCount: number;
+    }
   | { ok: false; reason: string; error?: string };
 
 function sendToolProgress(
@@ -70,7 +88,8 @@ export function registerContextPruneTool(
         });
         if (!result.ok) {
           if (result.reason === "aborted") {
-            const cancelledText = "Context prune was cancelled (Esc pressed). No batches were summarized and the prune frontier was not advanced. You can call context_prune again when ready.";
+            const cancelledText =
+              "Context prune was cancelled (Esc pressed). No batches were summarized and the prune frontier was not advanced. You can call context_prune again when ready.";
             sendToolProgress(onUpdate, "⊘ Context prune cancelled.");
             return {
               content: [{ type: "text", text: cancelledText }],

@@ -41,7 +41,8 @@ function estimateContentBlockTokens(block: unknown, config: ContextPruneConfig):
       estimateValueTokens(record.args ?? record.input ?? {}, config)
     );
   }
-  if (type === "toolResult") return estimateValueTokens(record.content ?? record.result ?? record.text ?? "", config);
+  if (type === "toolResult")
+    return estimateValueTokens(record.content ?? record.result ?? record.text ?? "", config);
 
   return estimateValueTokens(record, config);
 }
@@ -80,8 +81,13 @@ function getToolResultId(message: any): string | undefined {
  * This keeps the newest active message intact even when it is larger than the
  * tail budget by itself.
  */
-export function computeProtectedTail(messages: any[], config: ContextPruneConfig): ProtectedTailResult {
-  const budget = Number.isFinite(config.protectedTailTokens) ? Math.max(0, Math.floor(config.protectedTailTokens)) : 0;
+export function computeProtectedTail(
+  messages: any[],
+  config: ContextPruneConfig,
+): ProtectedTailResult {
+  const budget = Number.isFinite(config.protectedTailTokens)
+    ? Math.max(0, Math.floor(config.protectedTailTokens))
+    : 0;
   const protectedToolCallIds = new Set<string>();
   if (budget <= 0) return { protectedToolCallIds, estimatedTailTokens: 0 };
 
